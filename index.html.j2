@@ -25,7 +25,12 @@
         <div class="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
           <div class="bg-gray-100 p-3 font-semibold">{{ app.display_name }}</div>
           <div class="p-4">
-            <a href="{{ app.html_path }}" class="inline-block bg-amber-500 hover:bg-amber-600 text-white py-1 px-3 rounded transition-colors"><img src="{{ app.image }}" alt="Open App"></a>
+            <a href="{{ app.html_path }}" class="inline-block bg-amber-500 hover:bg-amber-600 text-white py-1 px-3 rounded transition-colors"><img src="{{ app.image }}" alt="Dashboard image"></a>
+          </div>
+          <div class="p-3">
+          {% for author in app.authors %}
+            <div class="italic text-gray-500 text-sm">{{ author.name }}  <a href="{{ author.orcid }}"><img src="public/ORCID-iD_icon_unauth_vector.svg" alt="Orcid link" class="inline h-4"></a> <a href="{{ author.github }}"><img src="public/GitHub_Invertocat_Black.svg" alt="GitHub logo" class="inline h-4"></a></div>
+          {% endfor%}
           </div>
         </div>
         {% endfor %}
@@ -34,7 +39,7 @@
     </main>
 
     <footer class="mt-10 pt-6 border-t border-gray-200 text-center text-sm text-gray-600">
-      <p class="mb-2">Built by the SURF Open Science Innovation team.
+      <p class="mb-2">Built by the <a href="https://www.surf.nl/themas/open-science/open-research-information" target="_blank" class="text-blue-500 hover:underline">SURF Open Science Innovation team</a>.
       For feedback you can <a href="https://github.com/surf-ori/dashboards/issues" target="_blank" class="text-blue-500 hover:underline">raise an issue here</a>.
       Source code under <a href="https://github.com/surf-ori/dashboards" target="_blank" class="text-blue-500 hover:underline">https://github.com/surf-ori/dashboards</a>.
       This website is licenced as CC-BY. Data powering the dashboards may have a different licence.</p>
