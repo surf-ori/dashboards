@@ -5,40 +5,14 @@
 #     "marimo>=0.19.0",
 #     "openpyxl==3.1.5",
 #     "pandas==2.3.3",
+#     "pydantic-ai==1.67.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.20.2"
+__generated_with = "0.20.4"
 app = marimo.App(width="full", app_title="Dutch ORCiD Monitor")
-
-DATA_URL = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vSVbrjJLpVfZ_zzzHHCuyuoy29OXla9R17XtzcbOEnIDc9I4-3k_7AyNjh5Ab04t9T54ge8idgpfMWi/"
-    "pub?output=xlsx"
-)
-
-TOTAL_RESEARCHERS = "Aantal onderzoekers"
-CRIS_REGISTRATIONS = "Aantal ORCiD registraties in het CRIS van Onderzoekers"
-CRIS_EXPORTS = "Aantal ORCiD Export Koppelingen in het CRIS van Onderzoekers"
-ORCID_DATABASE = "Aantal Onderzoekers in de ORCiD database"
-
-ABSOLUTE_METRICS = [
-    TOTAL_RESEARCHERS,
-    CRIS_REGISTRATIONS,
-    CRIS_EXPORTS,
-    ORCID_DATABASE,
-]
-
-RELATIVE_METRICS = [
-    CRIS_REGISTRATIONS,
-    CRIS_EXPORTS,
-    ORCID_DATABASE,
-]
-
-DEFAULT_RELATIVE_METRIC = CRIS_REGISTRATIONS
-
 
 async with app.setup(hide_code=True):
     try:
@@ -56,56 +30,90 @@ async with app.setup(hide_code=True):
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        """
-        <div style="
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1.5rem;
-            padding-bottom: 0.75rem;
-            border-bottom: 1px solid #e5e5e5;
-            margin-bottom: 1rem;
-        ">
-            <div>
-                <h1 style="margin: 0;">Dutch ORCiD Monitor</h1>
-                <div style="color: #666; font-size: 0.95rem; margin-top: 0.35rem;">
-                    Tijdlijn van ORCiD-adoptie in Nederlandse CRIS-systemen
-                </div>
-            </div>
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <img
-                    src="public/ORCID-iD_icon_unauth_vector.svg"
-                    alt="ORCID logo"
-                    style="height: 42px;"
-                />
-                <img
-                    src="https://www.surf.nl/themes/surf/logo.svg"
-                    alt="SURF logo"
-                    style="height: 42px;"
-                />
+    # add constants
+
+    DATA_URL = (
+        "https://docs.google.com/spreadsheets/d/e/"
+        "2PACX-1vSVbrjJLpVfZ_zzzHHCuyuoy29OXla9R17XtzcbOEnIDc9I4-3k_7AyNjh5Ab04t9T54ge8idgpfMWi/"
+        "pub?output=xlsx"
+    )
+
+    TOTAL_RESEARCHERS = "Aantal onderzoekers"
+    CRIS_REGISTRATIONS = "Aantal ORCiD registraties in het CRIS van Onderzoekers"
+    CRIS_EXPORTS = "Aantal ORCiD Export Koppelingen in het CRIS van Onderzoekers"
+    ORCID_DATABASE = "Aantal Onderzoekers in de ORCiD database"
+
+    ABSOLUTE_METRICS = [
+        TOTAL_RESEARCHERS,
+        CRIS_REGISTRATIONS,
+        CRIS_EXPORTS,
+        ORCID_DATABASE,
+    ]
+
+    RELATIVE_METRICS = [
+        CRIS_REGISTRATIONS,
+        CRIS_EXPORTS,
+        ORCID_DATABASE,
+    ]
+
+    DEFAULT_RELATIVE_METRIC = CRIS_REGISTRATIONS
+    return (
+        ABSOLUTE_METRICS,
+        DATA_URL,
+        DEFAULT_RELATIVE_METRIC,
+        RELATIVE_METRICS,
+        TOTAL_RESEARCHERS,
+    )
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md("""
+    <div style="
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid #e5e5e5;
+        margin-bottom: 1rem;
+    ">
+        <div>
+            <h1 style="margin: 0;">Dutch ORCiD Monitor</h1>
+            <div style="color: #666; font-size: 0.95rem; margin-top: 0.35rem;">
+                Tijdlijn van ORCiD-adoptie in Nederlandse CRIS-systemen
             </div>
         </div>
-        """
-    )
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <img
+                src="public/ORCID-iD_icon_unauth_vector.svg"
+                alt="ORCID logo"
+                style="height: 42px;"
+            />
+            <img
+                src="https://www.surf.nl/themes/surf/logo.svg"
+                alt="SURF logo"
+                style="height: 42px;"
+            />
+        </div>
+    </div>
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(
-        """
-        Deze dashboardweergave gebruikt de SURF ORCiD monitor spreadsheet als bron.
-        Kies in de sidebar welke instellingen je wilt vergelijken en bepaal vervolgens
-        of de y-as absolute aantallen of relatieve waarden ten opzichte van
-        `Aantal onderzoekers` toont.
-        """
-    )
+    mo.md("""
+    Deze dashboardweergave gebruikt de SURF ORCiD monitor spreadsheet als bron.
+    Kies in de sidebar welke instellingen je wilt vergelijken en bepaal vervolgens
+    of de y-as absolute aantallen of relatieve waarden ten opzichte van
+    `Aantal onderzoekers` toont.
+    """)
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(ABSOLUTE_METRICS, DATA_URL):
     survey_data = pd.read_excel(DATA_URL).rename(columns=lambda col: str(col).strip())
     survey_data["Tijdstempel"] = pd.to_datetime(
         survey_data["Tijdstempel"], errors="coerce"
@@ -129,8 +137,13 @@ def _():
     )
     min_measurement_date = survey_data["Datum van meting"].min().date()
     max_measurement_date = survey_data["Datum van meting"].max().date()
-
-    return cris_products, max_measurement_date, min_measurement_date, survey_data, universities
+    return (
+        cris_products,
+        max_measurement_date,
+        min_measurement_date,
+        survey_data,
+        universities,
+    )
 
 
 @app.cell(hide_code=True)
@@ -144,7 +157,13 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(metric_mode):
+def _(
+    ABSOLUTE_METRICS,
+    DEFAULT_RELATIVE_METRIC,
+    RELATIVE_METRICS,
+    TOTAL_RESEARCHERS,
+    metric_mode,
+):
     metric_options = (
         RELATIVE_METRICS if metric_mode.value == "Relatief" else ABSOLUTE_METRICS
     )
@@ -194,7 +213,6 @@ def _(cris_products, max_measurement_date, min_measurement_date, universities):
         label=f"{mo.icon('lucide:calendar')} Tot en met",
         full_width=True,
     )
-
     return cris_filter, end_date, start_date, university_filter
 
 
@@ -277,12 +295,17 @@ def _(cris_filter, end_date, start_date, survey_data, university_filter):
     filtered_survey_data = filtered_survey_data[
         filtered_survey_data["Datum van meting"].between(selected_start, selected_end)
     ].copy()
-
     return (filtered_survey_data,)
 
 
 @app.cell(hide_code=True)
-def _(filtered_survey_data, metric_mode, metric_selector):
+def _(
+    ABSOLUTE_METRICS,
+    TOTAL_RESEARCHERS,
+    filtered_survey_data,
+    metric_mode,
+    metric_selector,
+):
     timeline_data = (
         filtered_survey_data.groupby("Datum van meting", as_index=False)[ABSOLUTE_METRICS]
         .sum(min_count=1)
@@ -305,47 +328,46 @@ def _(filtered_survey_data, metric_mode, metric_selector):
         timeline_data["metric_value"] = []
         y_axis_title = metric_selector.value
         y_axis_format = ",.0f"
+    return
 
-    return timeline_data, y_axis_format, y_axis_title
 
-
-@app.cell(hide_code=True)
-def _(filtered_survey_data, metric_mode, metric_selector, timeline_data):
+app._unparsable_cell(
+    """
     if filtered_survey_data.empty or timeline_data.empty:
         mo.md(
-            """
+            \"\"\"
             ## Selectie zonder resultaten
             Pas de filters in de sidebar aan om metingen in de tijdlijn te tonen.
-            """
+            \"\"\"
         )
         return
 
     latest_point = timeline_data.iloc[-1]
-    latest_metric_value = latest_point["metric_value"]
-    latest_measurement_date = latest_point["Datum van meting"]
+    latest_metric_value = latest_point[\"metric_value\"]
+    latest_measurement_date = latest_point[\"Datum van meting\"]
 
-    if metric_mode.value == "Relatief":
-        latest_value = "{:.1%}".format(latest_metric_value)
+    if metric_mode.value == \"Relatief\":
+        latest_value = \"{:.1%}\".format(latest_metric_value)
     else:
-        latest_value = f"{latest_metric_value:,.0f}"
+        latest_value = f\"{latest_metric_value:,.0f}\"
 
     summary_cards = mo.hstack(
         [
             mo.stat(
-                label="Metingen in selectie",
-                value=f"{len(filtered_survey_data):,}",
+                label=\"Metingen in selectie\",
+                value=f\"{len(filtered_survey_data):,}\",
                 bordered=True,
             ),
             mo.stat(
-                label="Universiteiten in selectie",
+                label=\"Universiteiten in selectie\",
                 value=int(
-                    filtered_survey_data["Selecteer je Universiteit"].nunique()
+                    filtered_survey_data[\"Selecteer je Universiteit\"].nunique()
                 ),
                 bordered=True,
             ),
             mo.stat(
-                label="Laatste meetdatum",
-                value=latest_measurement_date.strftime("%Y-%m-%d"),
+                label=\"Laatste meetdatum\",
+                value=latest_measurement_date.strftime(\"%Y-%m-%d\"),
                 bordered=True,
             ),
             mo.stat(
@@ -354,22 +376,24 @@ def _(filtered_survey_data, metric_mode, metric_selector, timeline_data):
                 bordered=True,
             ),
         ],
-        widths="equal",
-        align="center",
+        widths=\"equal\",
+        align=\"center\",
     )
 
     mo.vstack(
         [
-            mo.md("## Overzicht"),
+            mo.md(\"## Overzicht\"),
             summary_cards,
         ],
         gap=1,
     )
-    return
+    """,
+    column=None, disabled=False, hide_code=True, name="_"
+)
 
 
-@app.cell(hide_code=True)
-def _(filtered_survey_data, metric_mode, timeline_data, y_axis_format, y_axis_title):
+app._unparsable_cell(
+    r"""
     if filtered_survey_data.empty or timeline_data.empty:
         return
 
@@ -428,7 +452,9 @@ def _(filtered_survey_data, metric_mode, timeline_data, y_axis_format, y_axis_ti
         ],
         gap=1,
     )
-    return
+    """,
+    column=None, disabled=False, hide_code=True, name="_"
+)
 
 
 if __name__ == "__main__":
