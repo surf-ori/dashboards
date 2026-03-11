@@ -1,0 +1,12 @@
+{
+    "title": "Dutch ORCID Monitor",
+    "display_name": "Dutch ORCID Monitor",
+    "image": "public/screenshot.png",
+    "authors": [
+        {
+            "name": "Maurice Vanderfeesten",
+            "github": "https://github.com/mosart",
+            "orcid": "https://orcid.org/0000-0001-6397-4759"
+        }
+    ]
+}
