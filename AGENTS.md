@@ -62,6 +62,11 @@ uvx ruff check notebooks/[notebook-name]/notebook.py
 uvx ruff check notebooks/[notebook-name]/notebook.py --fix
 ```
 
+### Run marimo check on a notebook
+```bash
+uvx marimo check notebooks/[notebook-name]/notebook.py
+```
+
 ## Testing
 
 ### Run pytest for notebooks that have tests
@@ -78,6 +83,16 @@ uv run pytest notebooks/[notebook-name]/test_[name].py::test_function_name
 ```bash
 uv run pytest -v notebooks/[notebook-name]/
 ```
+
+### Marimo notebook testing
+When adding tests to notebooks, ensure `pytest` is in the dependencies and add test cells with functions starting with `test_`:
+
+```python
+# Add to script header dependencies
+#     "pytest>=7.0.0",
+```
+
+Tests can run via: `pytest notebooks/[notebook-name]/notebook.py`
 
 ## Code Style Guidelines
 
@@ -153,7 +168,7 @@ except FileNotFoundError as e:
     "description": "Brief description"
   }
   ```
-- **Script header**: Include themarimo dependency specification at the top:
+- **Script header**: Include the marimo dependency specification at the top:
   ```python
   # /// script
   # requires-python = ">=3.12"
@@ -163,6 +178,56 @@ except FileNotFoundError as e:
   # ]
   # ///
   ```
+
+### Marimo Best Practices
+
+**Show all UI elements always.** Only change the data source in script mode.
+
+- Sliders, buttons, widgets should always be created and displayed
+- In script mode, just use synthetic/default data instead of waiting for user input
+- Don't wrap everything in `if is_script_mode` conditionals
+- Don't use try/except for normal control flow
+
+**Don't guard cells with `if` statements.** Marimo's reactivity handles dependencies:
+
+```python
+# BAD - the if statement prevents the chart from showing
+@app.cell
+def _(plt, training_results):
+    if training_results:  # WRONG
+        fig, ax = plt.subplots()
+        ax.plot(training_results['losses'])
+        fig
+    return
+
+# GOOD - let marimo handle the dependency
+@app.cell
+def _(plt, training_results):
+    fig, ax = plt.subplots()
+    ax.plot(training_results['losses'])
+    fig
+    return
+```
+
+**Cell output rendering:** Marimo only renders the **final expression** of a cell. Indented or conditional expressions won't render:
+
+```python
+# BAD - indented expression won't render
+@app.cell
+def _(mo, condition):
+    if condition:
+        mo.md("This won't show!")  # WRONG
+    return
+
+# GOOD - final expression renders
+@app.cell
+def _(mo, condition):
+    result = mo.md("Shown!") if condition else mo.md("Also shown!")
+    result
+    return
+```
+
+**Variable naming:** Avoid underscore-prefixing imports (e.g., `import numpy as np` not `import numpy as _np`). Only use `_prefix` for loop variables that would genuinely collide with another cell's outputs.
 
 ### Code Formatting
 
@@ -193,6 +258,7 @@ except FileNotFoundError as e:
 1. Create a new branch for your changes
 2. Edit notebooks using `uvx marimo edit notebooks/[name]/notebook.py`
 3. Run linting: `uvx ruff check notebooks/`
-4. Test locally: `uv run .github/scripts/build.py --output-dir _site`
-5. Commit and push changes
-6. Deploy happens automatically on push to main branch
+4. Run marimo check: `uvx marimo check notebooks/[name]/notebook.py`
+5. Test locally: `uv run .github/scripts/build.py --output-dir _site`
+6. Commit and push changes
+7. Deploy happens automatically on push to main branch
