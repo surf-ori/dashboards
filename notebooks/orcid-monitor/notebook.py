@@ -3,6 +3,7 @@
 # dependencies = [
 #     "altair==6.0.0",
 #     "marimo>=0.19.0",
+#     "numpy>=1.26.0",
 #     "openpyxl==3.1.5",
 #     "pandas==2.3.3",
 #     "pydantic-ai==1.67.0",
@@ -11,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.20.4"
+__generated_with = "0.21.0"
 app = marimo.App(width="full", app_title="Dutch ORCiD Monitor")
 
 async with app.setup(hide_code=True):
@@ -117,7 +118,7 @@ def _():
     Dit dashboard gebruikt de Nationale ORCiD monitor [spreadsheet](https://docs.google.com/spreadsheets/d/e/2PACX-1vSVbrjJLpVfZ_zzzHHCuyuoy29OXla9R17XtzcbOEnIDc9I4-3k_7AyNjh5Ab04t9T54ge8idgpfMWi/pub?output=html) als bron. Ingevuld door de instellingen via dit [*web formulier*](https://docs.google.com/forms/d/e/1FAIpQLScxSZqFRWBO_sniAKiDL5mEiEEtkfcs2XOhWlV-BHnOzd_qXw/viewform).
     Kies in de sidebar welke instellingen je wilt vergelijken en bepaal vervolgens
     of de y-as absolute aantallen of relatieve waarden ten opzichte van
-    `Aantal onderzoekers` toont. f
+    `Aantal onderzoekers` toont.
     """)
     return
 
@@ -150,9 +151,7 @@ def survey_data(ABSOLUTE_METRICS, DATA_URL):
 
     # Build sorted filter options and the available date range for the sidebar.
     universities = sorted(survey_data["Selecteer je Universiteit"].dropna().unique())
-    cris_products = sorted(
-        survey_data["Selecteer je CRIS product"].dropna().unique()
-    )
+    cris_products = sorted(survey_data["Selecteer je CRIS product"].dropna().unique())
     min_measurement_date = survey_data["Datum van meting"].min().date()
     max_measurement_date = survey_data["Datum van meting"].max().date()
     return (
@@ -269,12 +268,30 @@ def date_granularity_control():
 
 
 @app.cell(hide_code=True)
+def projection_control():
+    projection_toggle = mo.ui.radio(
+        options=["Nee", "Ja"],
+        value="Nee",
+        label=f"{mo.icon('lucide:trending-up')} Projectie",
+    )
+    projection_years = mo.ui.dropdown(
+        options=[0, 2, 5, 10],
+        value=5,
+        label=f"{mo.icon('lucide:calendar')} Projectie jaren",
+        full_width=True,
+    )
+    return projection_toggle, projection_years
+
+
+@app.cell(hide_code=True)
 def sidebar_layout(
     cris_filter,
     date_granularity,
     end_date,
     metric_mode,
     metric_selector,
+    projection_toggle,
+    projection_years,
     start_date,
     university_filter,
 ):
@@ -298,6 +315,9 @@ def sidebar_layout(
             mo.md("---"),
             start_date,
             end_date,
+            mo.md("---"),
+            projection_toggle,
+            projection_years,
         ],
         gap=1,
     )
@@ -471,7 +491,9 @@ def timeline_dataset(
         university_series["universities_in_average"] = pd.NA
 
         national_series = (
-            university_measurements.groupby(["bucket_date", "period_label"], as_index=False)
+            university_measurements.groupby(
+                ["bucket_date", "period_label"], as_index=False
+            )
             .agg(
                 {
                     "Datum van meting": "max",
@@ -504,7 +526,9 @@ def timeline_dataset(
     # Derive the plotted metric from the per-series absolute metrics.
     if metric_mode.value == "Relatief":
         denominator = timeline_data[TOTAL_RESEARCHERS].replace({0: pd.NA})
-        timeline_data["metric_value"] = timeline_data[metric_selector.value] / denominator
+        timeline_data["metric_value"] = (
+            timeline_data[metric_selector.value] / denominator
+        )
         y_axis_title = f"{metric_selector.value} / {TOTAL_RESEARCHERS}"
         y_axis_format = ".0%"
     else:
@@ -614,6 +638,8 @@ def timeline_chart(
     date_granularity,
     filtered_survey_data,
     metric_mode,
+    projection_toggle,
+    projection_years,
     series_order,
     timeline_data,
     y_axis_format,
@@ -621,6 +647,8 @@ def timeline_chart(
 ):
     # Title: Timeline Chart
     # Purpose: Plot the aggregated measurements over time for the selected metric.
+
+    from numpy import polyfit, polyval
 
     tooltip_fields = [
         alt.Tooltip("series_label:N", title="Categorie"),
@@ -673,45 +701,160 @@ def timeline_chart(
         }[date_granularity.value]
 
         # Draw one line per university and a separate national-average line.
-        timeline_chart = alt.Chart(timeline_data).mark_line(
-            point=False,
-            strokeWidth=3,
-        ).encode(
-            x=alt.X(
-                "bucket_date:T",
-                title=f"Tijdlijn ({date_granularity.value.lower()})",
-                axis=alt.Axis(format=x_axis_format, labelAngle=-30),
-            ),
-            y=alt.Y(
-                "metric_value:Q",
-                title=y_axis_label,
-                axis=alt.Axis(format=y_axis_format),
-            ),
-            color=alt.Color(
-                "series_label:N",
-                title="Categorie",
-                sort=series_order,
-            ),
-            strokeDash=alt.StrokeDash(
-                "series_type:N",
-                legend=None,
-                scale=alt.Scale(
-                    domain=["Landelijk gemiddelde", "Universiteit"],
-                    range=[[10, 5], [1, 0]],
+        timeline_chart = (
+            alt.Chart(timeline_data)
+            .mark_line(
+                point=False,
+                strokeWidth=3,
+            )
+            .encode(
+                x=alt.X(
+                    "bucket_date:T",
+                    title=f"Tijdlijn ({date_granularity.value.lower()})",
+                    axis=alt.Axis(format=x_axis_format, labelAngle=-30),
                 ),
-            ),
-            tooltip=tooltip_fields,
+                y=alt.Y(
+                    "metric_value:Q",
+                    title=y_axis_label,
+                    axis=alt.Axis(format=y_axis_format),
+                ),
+                color=alt.Color(
+                    "series_label:N",
+                    title="Categorie",
+                    sort=series_order,
+                ),
+                strokeDash=alt.StrokeDash(
+                    "series_type:N",
+                    legend=None,
+                    scale=alt.Scale(
+                        domain=["Landelijk gemiddelde", "Universiteit"],
+                        range=[[10, 5], [1, 0]],
+                    ),
+                ),
+                tooltip=tooltip_fields,
+            )
         )
 
         # Overlay points so individual measurements remain easy to inspect.
-        timeline_points = alt.Chart(timeline_data).mark_circle(
-            size=70,
-        ).encode(
-            x="bucket_date:T",
-            y="metric_value:Q",
-            color=alt.Color("series_label:N", title="Categorie", sort=series_order),
-            tooltip=tooltip_fields,
+        timeline_points = (
+            alt.Chart(timeline_data)
+            .mark_circle(
+                size=70,
+            )
+            .encode(
+                x="bucket_date:T",
+                y="metric_value:Q",
+                color=alt.Color("series_label:N", title="Categorie", sort=series_order),
+                tooltip=tooltip_fields,
+            )
         )
+
+        # Generate projection trend lines if enabled
+        chart_layers = [timeline_chart, timeline_points]
+
+        if projection_toggle.value == "Ja" and projection_years.value > 0:
+            projection_data = []
+            years_ahead = projection_years.value
+
+            granularity_freq = {
+                "Dag": "D",
+                "Week": "W",
+                "Maand": "ME",
+                "Kwartaal": "Q",
+                "Jaar": "Y",
+            }[date_granularity.value]
+
+            for series_label in timeline_data["series_label"].unique():
+                series_df = timeline_data[
+                    timeline_data["series_label"] == series_label
+                ].copy()
+                if len(series_df) < 2:
+                    continue
+
+                series_df = series_df.sort_values("bucket_date")
+                x_dates = series_df["bucket_date"]
+                y_values = series_df["metric_value"]
+
+                x_ordinal = x_dates.apply(lambda d: d.toordinal()).values
+                y_vals = y_values.values
+
+                try:
+                    coeffs = polyfit(x_ordinal, y_vals, 1)
+                except Exception:
+                    continue
+
+                last_date = x_dates.max()
+                periods_ahead = {
+                    "Dag": years_ahead * 365,
+                    "Week": years_ahead * 52,
+                    "Maand": years_ahead * 12,
+                    "Kwartaal": years_ahead * 4,
+                    "Jaar": years_ahead,
+                }[date_granularity.value]
+
+                future_dates = pd.date_range(
+                    start=last_date, periods=periods_ahead + 1, freq=granularity_freq
+                )[1:]
+
+                future_ordinal = (
+                    future_dates.to_series().apply(lambda d: d.toordinal()).values
+                )
+                future_values = polyval(coeffs, future_ordinal)
+
+                for fd, fv in zip(future_dates, future_values):
+                    projection_data.append(
+                        {
+                            "bucket_date": fd,
+                            "metric_value": fv,
+                            "series_label": series_label,
+                            "series_type": series_df["series_type"].iloc[0],
+                            "period_label": f"Projectie +{years_ahead}j",
+                            "Datum van meting": fd,
+                            "universities_in_average": pd.NA,
+                            TOTAL_RESEARCHERS: pd.NA,
+                            CRIS_REGISTRATIONS: pd.NA,
+                            CRIS_EXPORTS: pd.NA,
+                            ORCID_DATABASE: pd.NA,
+                            "is_projection": True,
+                        }
+                    )
+
+            if projection_data:
+                projection_df = pd.DataFrame(projection_data)
+
+                projection_line = (
+                    alt.Chart(projection_df)
+                    .mark_line(
+                        point=False,
+                        strokeWidth=2,
+                        strokeDash=[4, 4],
+                    )
+                    .encode(
+                        x=alt.X(
+                            "bucket_date:T",
+                            axis=alt.Axis(format=x_axis_format, labelAngle=-30),
+                        ),
+                        y=alt.Y(
+                            "metric_value:Q",
+                            axis=alt.Axis(format=y_axis_format),
+                        ),
+                        color=alt.Color(
+                            "series_label:N",
+                            title="Categorie",
+                            sort=series_order,
+                        ),
+                        strokeDash=alt.StrokeDash(
+                            "series_type:N",
+                            legend=None,
+                            scale=alt.Scale(
+                                domain=["Landelijk gemiddelde", "Universiteit"],
+                                range=[[10, 5], [1, 0]],
+                            ),
+                        ),
+                        tooltip=tooltip_fields,
+                    )
+                )
+                chart_layers.append(projection_line)
 
         # Render the explanatory text together with the combined chart.
         timeline_content = mo.vstack(
@@ -720,8 +863,8 @@ def timeline_chart(
                 mo.md(
                     "Per universiteit toont de grafiek steeds de laatst ingestuurde meting binnen de gekozen periode. De lijn `Landelijk gemiddelde` is het gemiddelde van alle universiteiten die in die periode een meting hebben."
                 ),
-                (timeline_chart + timeline_points)
-                .properties(height=460, width="container")
+                alt.layer(*chart_layers)
+                .properties(height=400, width=600)
                 .configure_axis(labelFontSize=12, titleFontSize=13)
                 .configure_view(strokeOpacity=0),
             ],
