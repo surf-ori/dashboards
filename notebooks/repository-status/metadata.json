@@ -1,0 +1,13 @@
+{
+    "title": "Dutch repositories – OAI-PMH endpoint status",
+    "display_name": "Dutch repositories – OAI-PMH endpoint status",
+    "image": "public/repository-status/screenshot.png",
+    "authors": [
+        {
+            "name": "Till Bey",
+            "github": "https://github.com/tillbey",
+            "orcid": "https://orcid.org/0000-0001-7509-9875"
+        }
+    ],
+    "format": "html"
+}

@@ -30,7 +30,7 @@ import fire
 
 from loguru import logger
 
-def _export_html_wasm(notebook_path: Path, output_dir: Path, as_app: bool = False) -> bool:
+def _export_html_wasm(notebook_path: Path, output_dir: Path, as_app: bool = False, format: str = 'html-wasm') -> bool:
     """Export a single marimo notebook to HTML/WebAssembly format.
 
     This function takes a marimo notebook (.py file) and exports it to HTML/WebAssembly format.
@@ -50,15 +50,18 @@ def _export_html_wasm(notebook_path: Path, output_dir: Path, as_app: bool = Fals
     output_path: Path = Path(notebook_path.parent.name).with_suffix(".html")
 
     # Base command for marimo export
-    cmd: List[str] = ["uvx", "marimo", "export", "html-wasm", "--sandbox"]
+    if format == 'html':
+        cmd: List[str] = ["uvx", "marimo", "export", "html", "--sandbox", "--no-include-code"]
+    else:    
+        cmd: List[str] = ["uvx", "marimo", "export", "html-wasm", "--sandbox"]
 
-    # Configure export mode based on whether it's an app or a notebook
-    if as_app:
-        logger.info(f"Exporting {notebook_path} to {output_path} as app")
-        cmd.extend(["--mode", "run", "--no-show-code"])  # Apps run in "run" mode with hidden code
-    else:
-        logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
-        cmd.extend(["--mode", "edit"])  # Notebooks run in "edit" mode
+        # Configure export mode based on whether it's an app or a notebook
+        if as_app:
+            logger.info(f"Exporting {notebook_path} to {output_path} as app")
+            cmd.extend(["--mode", "run", "--no-show-code"])  # Apps run in "run" mode with hidden code
+        else:
+            logger.info(f"Exporting {notebook_path} to {output_path} as notebook")
+            cmd.extend(["--mode", "edit"])  # Notebooks run in "edit" mode
 
     try:
         # Create full output path and ensure directory exists
@@ -167,7 +170,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool=False) -> List[dict]:
     notebook_data = [
         _get_metadata(notebook)
         for notebook in notebooks
-        if _export_html_wasm(notebook / 'notebook.py', output_dir, as_app=as_app)
+        if _export_html_wasm(notebook / 'notebook.py', output_dir, as_app=as_app, format=_get_metadata(notebook).get('format', 'html-wasm'))
     ]
 
     logger.info(f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}")
@@ -215,7 +218,7 @@ def main(
     notebooks_data = []#_export(Path("notebooks"), output_dir, as_app=False)
 
     # Export apps from the apps/ directory
-    apps_data = _export(Path("notebooks"), output_dir, as_app=True)
+    apps_data = _export(Path("notebooks"), output_dir, as_app=False)
 
     # Exit if no notebooks or apps were found
     if not notebooks_data and not apps_data:
