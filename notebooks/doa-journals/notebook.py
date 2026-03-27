@@ -12,8 +12,11 @@
 
 import marimo
 
-__generated_with = "0.19.4"
-app = marimo.App(app_title="Diamond Open Access journals in the Netherlands", width="full")
+__generated_with = "0.21.1"
+app = marimo.App(
+    width="full",
+    app_title="Diamond Open Access journals in the Netherlands",
+)
 
 
 @app.cell
@@ -24,6 +27,7 @@ async def _():
     import marimo as mo
     import polars as pl
     import altair as alt
+
     return alt, mo, pl
 
 
@@ -53,7 +57,7 @@ def _(journals, mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    The data behind the dashboard can be found below, and also on Zenodo under [10.5281/zenodo.17185088](https://doi.org/10.5281/zenodo.17185088).
+    This dashboard is based on the dataset **Livio, C & Kramer, B (2025)**: A curated list of Diamond OA journals in the Netherlands. *Version 2, Zenodo,* [doi: 10.5281/zenodo.17185088](https://doi.org/10.5281/zenodo.17185088).
     """)
     return
 
@@ -63,7 +67,7 @@ def _(mo):
     data_selector = mo.ui.dropdown({
         'data from Google Sheet': ('https://docs.google.com/spreadsheets/d/1CaHEgS6Nu9OAeyEHe9tmCpMgnhRr196zFp2gsRw20YM/export?format=xlsx', 'Included Diamond OA Journals'),
         'data from Zenodo': ('https://zenodo.org/api/records/17195184/files/Diamond%20OA%20-%20NL%20Journals%20-%20WGNM%20-%20FINAL%20-%20SHAREABLE-version%202.xlsx/content', 'Included DOA Journals')
-    }, value='data from Google Sheet')
+    }, value='data from Zenodo')
     data_selector
     return (data_selector,)
 
