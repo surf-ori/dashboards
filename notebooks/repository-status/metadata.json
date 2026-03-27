@@ -1,7 +1,6 @@
 {
     "title": "Dutch repositories – OAI-PMH endpoint status",
-    "display_name": "Dutch repositories – OAI-PMH endpoint status",
-    "image": "public/repository-status/screenshot.png",
+    "image": "public/screenshot-repository-status.png",
     "authors": [
         {
             "name": "Till Bey",
