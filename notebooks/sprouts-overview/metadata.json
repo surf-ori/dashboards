@@ -1,0 +1,18 @@
+{
+    "title": "Overview of ORI datasets in Sprouts",
+    "display_name": "Overview of ORI datasets in Sprouts",
+    "image": "public/screenshot-sprouts-overview.png",
+    "authors": [
+        {
+            "name": "Till Bey",
+            "github": "https://github.com/tillbey",
+            "orcid": "https://orcid.org/0000-0001-7509-9875"
+        },
+        {
+            "name": "Maurice Vanderfeesten",
+            "github": "https://github.com/mosart",
+            "orcid": "https://orcid.org/0000-0001-6397-4759"
+        }
+    ],
+    "format": "html"
+}
