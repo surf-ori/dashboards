@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.20.2"
+__generated_with = "0.22.5"
 app = marimo.App(width="medium")
 
 
@@ -50,7 +50,7 @@ def _(mo, time):
 def _(pl):
     repositories = (
         pl
-        .read_excel('https://zenodo.org/records/18959653/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx')
+        .read_excel('https://zenodo.org/records/19470205/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx')
         .with_columns(
             url=pl.col('oai_endpoint').str.json_decode(dtype=pl.List(pl.String)).list.get(0, null_on_oob=True)
         )
