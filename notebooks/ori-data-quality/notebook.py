@@ -204,35 +204,35 @@ def constants():
 
 @app.cell(hide_code=True)
 def ui_filters(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
-    # create dropdown widgets for organisation, CERIF entity, source, and publication type
+    # create multiselect widgets for organisation, CERIF entity, source, and publication type
     org_options = nl_inst_df['display_name'].to_list()
-    org_select = mo.ui.dropdown(
+    org_select = mo.ui.multiselect(
         options=org_options,
-        value='University of Amsterdam',
-        label='Organisation',
+        value=['University of Amsterdam'],
+        label=f"{mo.icon('lucide:landmark')} Organisation",
     )
-    entity_select = mo.ui.dropdown(
+    entity_select = mo.ui.multiselect(
         options=CERIF_ENTITIES,
-        value='Outputs: Publications',
-        label='CERIF Entity',
+        value=['Outputs: Publications'],
+        label=f"{mo.icon('lucide:boxes')} CERIF Entity",
     )
-    source_select = mo.ui.dropdown(
+    source_select = mo.ui.multiselect(
         options=SOURCES,
-        value='OpenAlex',
-        label='Primary Source',
+        value=['OpenAlex'],
+        label=f"{mo.icon('lucide:database')} Primary Source",
     )
-    pub_type_select = mo.ui.dropdown(
+    pub_type_select = mo.ui.multiselect(
         options=PUB_TYPES,
-        value='All',
-        label='Publication Type',
+        value=['All'],
+        label=f"{mo.icon('lucide:file-type')} Type",
     )
     return entity_select, org_select, pub_type_select, source_select
 
 
 @app.cell(hide_code=True)
 def selected_org(nl_inst_df, org_select, pl):
-    # filter institutions to the single row matching the dropdown selection
-    sel_org = nl_inst_df.filter(pl.col('display_name') == org_select.value)
+    # filter institutions to rows matching all selected organisations
+    sel_org = nl_inst_df.filter(pl.col('display_name').is_in(org_select.value))
     sel_ror = sel_org['ror'][0] if sel_org.height > 0 else ''
     return (sel_org,)
 
@@ -251,13 +251,19 @@ def header(mo):
 @app.cell(hide_code=True)
 def sidebar(entity_select, mo, org_select, pub_type_select, source_select):
     # stack filter dropdowns and mount them in the marimo sidebar
-    filters = mo.vstack(
-        [org_select, entity_select, source_select, pub_type_select],
-        gap=3,
+
+    filters = mo.vstack([
+        mo.md("### Filters"),
+        mo.md("---"),
+        org_select, 
+        entity_select, 
+        source_select, 
+        pub_type_select,],
+        gap=1,
         align='end',
     )
 
-    mo.sidebar(filters)
+    mo.sidebar(filters,width="350px")
     return
 
 
@@ -267,8 +273,8 @@ def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
     _n_nl_unis     = nl_inst_df.height
     _n_oa_orgs     = oa_orgs_df.height
     _total_works   = total_works
-    _sel_works     = sel_org['works_count'][0] if sel_org.height > 0 else 0
-    _sel_cited     = sel_org['cited_by_count'][0] if sel_org.height > 0 else 0
+    _sel_works     = sel_org['works_count'].sum() if sel_org.height > 0 else 0
+    _sel_cited     = sel_org['cited_by_count'].sum() if sel_org.height > 0 else 0
 
     # KPI row
     _kpis = mo.hstack([
@@ -286,7 +292,7 @@ def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
         ),
         mo.stat(
             value=f"{_sel_works:,}",
-            label=f"Works — {org_select.value[:25]}",
+            label=f"Works — {', '.join(org_select.value)[:30] or '(none)'}",
             caption="OpenAlex publication count",
             bordered=True,
         ),
@@ -464,13 +470,13 @@ def completeness(
     # -----------------------------------------------------------------------
     _sel_fields = []
     for _f, _lbl in zip(_id_fields, _id_labels):
-        _val = sel_org[_f][0] if sel_org.height > 0 else False
+        _val = sel_org[_f].any() if sel_org.height > 0 else False
         _sel_fields.append({'Identifier': _lbl, 'Present': '✓' if _val else '✗'})
 
     _sel_tbl = mo.ui.table(
         pl.DataFrame(_sel_fields).to_pandas(),
         selection=None,
-        label=f"Identifier completeness — {org_select.value if hasattr(org_select, 'value') else ''}",
+        label=f"Identifier completeness — {', '.join(org_select.value)}",
     ) if sel_org.height > 0 else mo.md('_(no institution selected)_')
 
     # -----------------------------------------------------------------------
@@ -510,7 +516,7 @@ def completeness(
     ], gap=2)
 
     _completeness_content = mo.vstack([
-        _pub_section if entity_select.value.startswith('Outputs') else _inst_section,
+        _pub_section if any(v.startswith('Outputs') for v in entity_select.value) else _inst_section,
         mo.accordion({'SQL query details': _sql}),
     ], gap=4)
 
@@ -909,7 +915,7 @@ def footer(date, mo, org_select):
     mo.md(f"""
     <div style="font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;">
     <span>ORI Quality Dashboard · PID to Portal · SURF ORI team</span>
-    <span>Organisation: {org_select.value} · Data: OpenAlex / OpenAIRE via SURF DuckLake · {date.today()}</span>
+    <span>Organisation: {', '.join(org_select.value) or '(none)'} · Data: OpenAlex / OpenAIRE via SURF DuckLake · {date.today()}</span>
     </div>
     """)
     return
