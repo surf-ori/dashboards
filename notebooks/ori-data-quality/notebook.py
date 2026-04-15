@@ -1,112 +1,121 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "altair>=5.4.0",
-#     "duckdb>=1.1.0",
+#     "altair==6.0.0",
+#     "duckdb==1.5.2",
 #     "marimo>=0.10.0",
+#     "mcp==1.27.0",
+#     "openai==2.31.0",
 #     "pandas>=2.2.0",
-#     "polars[pyarrow]>=1.0.0",
+#     "polars[pyarrow]==1.39.3",
 #     "pyarrow>=17.0.0",
+#     "pytest==9.0.3",
+#     "python-lsp-ruff==2.3.1",
+#     "python-lsp-server==1.14.0",
+#     "sqlglot==30.4.3",
+#     "vegafusion==2.0.3",
+#     "vl-convert-python==1.9.0.post1",
+#     "websockets==16.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.20.2"
+__generated_with = "0.23.1"
 app = marimo.App(width="full", app_title="ORI Data Quality Dashboard")
 
 
-# ---------------------------------------------------------------------------
-# WASM setup (micropip for browser deployment)
-# ---------------------------------------------------------------------------
-
 @app.cell(hide_code=True)
-async def _():
+async def wasm_dependencies():
+    # install packages not bundled by the WASM export (duckdb is handled by mo.sql)
     import sys
     _ = None
     if 'pyodide' in sys.modules:
         import micropip
-        await micropip.install(['polars', 'pyarrow', 'altair', 'duckdb'])
+        await micropip.install(['polars', 'pyarrow', 'altair'])
         _ = 'wasm'
     return
 
 
-# ---------------------------------------------------------------------------
-# Imports
-# ---------------------------------------------------------------------------
-
 @app.cell(hide_code=True)
-def _():
-    import duckdb
+def imports():
+    # import all third-party libraries used throughout the notebook
     import marimo as mo
     import polars as pl
     import altair as alt
     from datetime import date
-    return alt, date, duckdb, mo, pl
 
+    return alt, date, mo, pl
 
-# ---------------------------------------------------------------------------
-# DuckDB connection + data source URL
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(duckdb):
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    BASE = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts'
-    INST_URL = f"{BASE}/data/openalex/institutions/data_0.parquet"
-    WORKS_URL = f"{BASE}/data/openalex/works/data_0.parquet"
-    OPENAIRE_ORGS_URL = f"{BASE}/data/openaire/organizations/data_0.parquet"
-    return BASE, INST_URL, OPENAIRE_ORGS_URL, WORKS_URL, con
+def catalog_url(mo):
+    # text input widget for the ORI DuckLake catalog URL
+    url = mo.ui.text(
+        value='https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/catalog.ducklake',
+        full_width=True,
+    )
+    mo.accordion({"DuckLake catalog URL": url})
+    return (url,)
 
-
-# ---------------------------------------------------------------------------
-# Load NL institutions from OpenAlex (single parquet file, fast)
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(INST_URL, con, pl):
-    nl_inst_df = con.execute(f"""
-    SELECT
-        display_name,
-        ror,
-        type,
-        works_count,
-        cited_by_count,
-        ids.ror      IS NOT NULL AS has_ror,
-        ids.grid     IS NOT NULL AS has_grid,
-        ids.wikidata IS NOT NULL AS has_wikidata,
-        ids.wikipedia IS NOT NULL AS has_wikipedia,
-        homepage_url IS NOT NULL AS has_homepage,
-        ids.grid      AS grid_id,
-        ids.wikidata  AS wikidata_id,
-        ids.wikipedia AS wikipedia_url,
-        homepage_url
-    FROM read_parquet('{INST_URL}')
-    WHERE country_code = 'NL'
-      AND type IN ('education', 'funder')
-      AND works_count > 1000
-    ORDER BY works_count DESC
-    """).pl()
+def attach_catalog(mo, url):
+    # attach the ORI DuckLake catalog to the shared mo.sql DuckDB connection
+    mo.sql(
+        f"""
+        ATTACH '{url.value}' AS sprouts (TYPE ducklake, READ_ONLY);
+        USE sprouts;
+        """
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def load_nl_institutions(mo):
+    # query NL education and funder institutions from the OpenAlex institutions catalog table
+    nl_inst_df = mo.sql(
+        f"""
+        -- Load data about Dutch Institutions in OpenAlex
+        SELECT
+            display_name,
+            ror,
+            type,
+            works_count,
+            cited_by_count,
+            ids.ror      IS NOT NULL AS has_ror,
+            ids.grid     IS NOT NULL AS has_grid,
+            ids.wikidata IS NOT NULL AS has_wikidata,
+            ids.wikipedia IS NOT NULL AS has_wikipedia,
+            homepage_url IS NOT NULL AS has_homepage,
+            ids.grid      AS grid_id,
+            ids.wikidata  AS wikidata_id,
+            ids.wikipedia AS wikipedia_url,
+            homepage_url
+        FROM openalex.institutions
+        WHERE country_code = 'NL'
+          AND type IN ('education', 'funder')
+          AND works_count > 1000
+        ORDER BY works_count DESC
+        """,
+        output=False
+    )
     return (nl_inst_df,)
 
 
-# ---------------------------------------------------------------------------
-# Load OpenAIRE NL organizations (for coverage comparison)
-# ---------------------------------------------------------------------------
-
 @app.cell(hide_code=True)
-def _(OPENAIRE_ORGS_URL, con, pl):
-    oa_orgs_df = con.execute(f"""
+def load_openaire_orgs(mo, pl):
+    # query NL organisations from the OpenAIRE organizations catalog table and extract PIDs
+    oa_orgs_df = mo.sql("""
     SELECT
         legalName,
         legalShortName,
         websiteUrl,
         id AS openaire_id,
         pids
-    FROM read_parquet('{OPENAIRE_ORGS_URL}')
+    FROM openaire.organizations
     WHERE country.code = 'NL'
-    """).pl()
+    """, output=False)
     # Extract ROR from pids list
     oa_orgs_df = oa_orgs_df.with_columns(
         pl.col('pids').list.eval(
@@ -129,30 +138,29 @@ def _(OPENAIRE_ORGS_URL, con, pl):
     return (oa_orgs_df,)
 
 
-# ---------------------------------------------------------------------------
-# Load works completeness from a sample parquet file
-# ---------------------------------------------------------------------------
-
 @app.cell(hide_code=True)
-def _(WORKS_URL, con, pl):
-    works_compl_raw = con.execute(f"""
+def load_works_completeness(mo, pl):
+    # aggregate field-level completeness from first OpenAlex works shard (data_0) via direct parquet read
+    # the full works table spans 732 files; querying data_0 only keeps this cell fast
+    _WORKS_URL = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openalex/works/data_0.parquet'
+    _raw = mo.sql(f"""
     SELECT
-        COUNT(*)                                    AS total,
-        COUNT(doi)                                  AS has_doi,
-        COUNT(language)                             AS has_language,
-        COUNT(type)                                 AS has_type,
-        COUNT_IF(open_access.is_oa)                 AS is_oa,
-        COUNT_IF(array_length(funders) > 0)         AS has_funder,
-        COUNT(license)                              AS has_license,
-        COUNT(abstract_inverted_index)              AS has_abstract,
-        COUNT(primary_location.source.issn_l)       AS has_issn,
-        COUNT_IF(array_length(corresponding_author_ids) > 0) AS has_corresponding_author,
-        COUNT(publication_year)                     AS has_year,
-        COUNT_IF(array_length(concepts) > 0)        AS has_concepts
-    FROM read_parquet('{WORKS_URL}')
-    """).fetchone()
+        COUNT(*)::BIGINT                                             AS total,
+        COUNT(doi)::BIGINT                                           AS has_doi,
+        COUNT(language)::BIGINT                                      AS has_language,
+        COUNT(type)::BIGINT                                          AS has_type,
+        COUNT_IF(open_access.is_oa)::BIGINT                          AS is_oa,
+        COUNT_IF(array_length(funders) > 0)::BIGINT                  AS has_funder,
+        COUNT(license)::BIGINT                                       AS has_license,
+        COUNT(abstract_inverted_index)::BIGINT                       AS has_abstract,
+        COUNT(primary_location.source.issn_l)::BIGINT                AS has_issn,
+        COUNT_IF(array_length(corresponding_author_ids) > 0)::BIGINT AS has_corresponding_author,
+        COUNT(publication_year)::BIGINT                              AS has_year,
+        COUNT_IF(array_length(concepts) > 0)::BIGINT                 AS has_concepts
+    FROM read_parquet('{_WORKS_URL}')
+    """, output=False)
 
-    total_works = works_compl_raw[0]
+    total_works = _raw['total'][0]
     works_compl_df = pl.DataFrame({
         'field': [
             'DOI', 'Language', 'Publication Type', 'Open Access Status',
@@ -165,41 +173,38 @@ def _(WORKS_URL, con, pl):
             'Corresp. Author', 'Year', 'Concepts'
         ],
         'has_value': [
-            works_compl_raw[1], works_compl_raw[2], works_compl_raw[3],
-            works_compl_raw[4], works_compl_raw[5], works_compl_raw[6],
-            works_compl_raw[7], works_compl_raw[8], works_compl_raw[9],
-            works_compl_raw[10], works_compl_raw[11],
+            _raw['has_doi'][0], _raw['has_language'][0], _raw['has_type'][0],
+            _raw['is_oa'][0],   _raw['has_funder'][0],  _raw['has_license'][0],
+            _raw['has_abstract'][0], _raw['has_issn'][0], _raw['has_corresponding_author'][0],
+            _raw['has_year'][0], _raw['has_concepts'][0],
         ],
         'total': [total_works] * 11,
     }).with_columns(
         (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
         (pl.col('total') - pl.col('has_value')).alias('missing'),
     )
-    return total_works, works_compl_df, works_compl_raw
+    return total_works, works_compl_df
 
-
-# ---------------------------------------------------------------------------
-# Constants: CERIF entities and identifier fields per entity
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _():
+def constants():
+    # define static lookup lists and brand colours used across UI and charts
     CERIF_ENTITIES = [
         'Outputs: Publications',
-        'Organisations: Institutions',
+        'Outputs: Products',
+        'Core: Organisation units',
+        'Core: Persons',
+        'Core: Projects',
     ]
     SOURCES = ['OpenAlex', 'OpenAIRE', 'Crossref', 'ORCID', 'ROR', 'DataCite']
     PUB_TYPES = ['All', 'Journal Article', 'Conference Paper', 'Book Chapter', 'Preprint', 'Thesis', 'Report']
     SURF_BLUE = '#009de0'
-    return CERIF_ENTITIES, PUB_TYPES, SOURCES, SURF_BLUE
+    return CERIF_ENTITIES, PUB_TYPES, SOURCES
 
-
-# ---------------------------------------------------------------------------
-# Filter UI: Organisation, CERIF Entity, Source, Publication Type
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
+def ui_filters(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
+    # create dropdown widgets for organisation, CERIF entity, source, and publication type
     org_options = nl_inst_df['display_name'].to_list()
     org_select = mo.ui.dropdown(
         options=org_options,
@@ -221,26 +226,20 @@ def _(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
         value='All',
         label='Publication Type',
     )
-    return entity_select, org_options, org_select, pub_type_select, source_select
+    return entity_select, org_select, pub_type_select, source_select
 
-
-# ---------------------------------------------------------------------------
-# Selected organisation info
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(nl_inst_df, org_select, pl):
+def selected_org(nl_inst_df, org_select, pl):
+    # filter institutions to the single row matching the dropdown selection
     sel_org = nl_inst_df.filter(pl.col('display_name') == org_select.value)
     sel_ror = sel_org['ror'][0] if sel_org.height > 0 else ''
-    return sel_org, sel_ror
+    return (sel_org,)
 
-
-# ---------------------------------------------------------------------------
-# Header
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(mo):
+def header(mo):
+    # render the dashboard title and subtitle as markdown
     mo.md("""
     # ORI Data Quality Dashboard
     **Metadata completeness, coverage & enrichment for Dutch research organisations**
@@ -249,26 +248,22 @@ def _(mo):
     return
 
 
-# ---------------------------------------------------------------------------
-# Filter bar
-# ---------------------------------------------------------------------------
-
 @app.cell(hide_code=True)
-def _(entity_select, mo, org_select, pub_type_select, source_select):
-    mo.hstack(
+def sidebar(entity_select, mo, org_select, pub_type_select, source_select):
+    # stack filter dropdowns and mount them in the marimo sidebar
+    filters = mo.vstack(
         [org_select, entity_select, source_select, pub_type_select],
         gap=3,
         align='end',
     )
+
+    mo.sidebar(filters)
     return
 
 
-# ===========================================================================
-# TAB CONTENT — Overview
-# ===========================================================================
-
 @app.cell(hide_code=True)
-def _(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
+def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
+    # build the overview tab: KPI stat cards, institutions table, and getting-started guide
     _n_nl_unis     = nl_inst_df.height
     _n_oa_orgs     = oa_orgs_df.height
     _total_works   = total_works
@@ -323,18 +318,18 @@ def _(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
     ])
 
     _guide = mo.md("""
-## Getting started
+    ## Getting started
 
-Use the **filters above** to focus your analysis on a specific organisation, CERIF entity, and source.
-The tabs below explore different aspects of data quality:
+    Use the **filters above** to focus your analysis on a specific organisation, CERIF entity, and source.
+    The tabs below explore different aspects of data quality:
 
-- **Completeness** — which metadata fields are present, and for what share of records
-- **Coverage** — which records appear in which open sources, and where there are gaps
-- **Accuracy** — how correctly formatted and valid the field values are
-- **Enrichment** — opportunities to add missing identifiers from external registries
+    - **Completeness** — which metadata fields are present, and for what share of records
+    - **Coverage** — which records appear in which open sources, and where there are gaps
+    - **Accuracy** — how correctly formatted and valid the field values are
+    - **Enrichment** — opportunities to add missing identifiers from external registries
 
-Data is drawn from the ORI DuckLake catalog (Parquet snapshots on SURF Object Store).
-*Part of the [PID to Portal](https://communities.surf.nl/en/open-research-information) project.*
+    Data is drawn from the ORI DuckLake catalog (Parquet snapshots on SURF Object Store).
+    *Part of the [PID to Portal](https://communities.surf.nl/en/open-research-information) project.*
     """)
 
     _overview_content = mo.vstack([
@@ -348,16 +343,21 @@ Data is drawn from the ORI DuckLake catalog (Parquet snapshots on SURF Object St
         _guide,
     ], gap=4)
     _overview_content
+    return
 
-
-# ===========================================================================
-# TAB CONTENT — Completeness
-# ===========================================================================
 
 @app.cell(hide_code=True)
-def _(
-    alt, entity_select, mo, nl_inst_df, org_select, pl, sel_org, sel_ror, works_compl_df
+def completeness(
+    alt,
+    entity_select,
+    mo,
+    nl_inst_df,
+    org_select,
+    pl,
+    sel_org,
+    works_compl_df,
 ):
+    # build the completeness tab: publication field completeness chart and institution identifier completeness
     # -----------------------------------------------------------------------
     # Publications completeness (works sample from OpenAlex)
     # -----------------------------------------------------------------------
@@ -477,21 +477,21 @@ def _(
     # SQL query reference
     # -----------------------------------------------------------------------
     _sql = mo.callout(mo.md("""
-**Query used (OpenAlex institutions):**
-```sql
-SELECT
+    **Query used (OpenAlex institutions):**
+    ```sql
+    SELECT
     display_name,
     ids.ror      IS NOT NULL AS has_ror,
     ids.grid     IS NOT NULL AS has_grid,
     ids.wikidata IS NOT NULL AS has_wikidata,
     ids.wikipedia IS NOT NULL AS has_wikipedia,
     homepage_url IS NOT NULL AS has_homepage
-FROM read_parquet(
-  'https://objectstore.surf.nl/.../data/openalex/institutions/data_0.parquet'
-)
-WHERE country_code = 'NL' AND type IN ('education', 'funder')
-```
-"""), kind='info')
+    FROM read_parquet(
+      'https://objectstore.surf.nl/.../data/openalex/institutions/data_0.parquet'
+    )
+    WHERE country_code = 'NL' AND type IN ('education', 'funder')
+    ```
+    """), kind='info')
 
     # -----------------------------------------------------------------------
     # Assemble completeness tab
@@ -515,14 +515,12 @@ WHERE country_code = 'NL' AND type IN ('education', 'funder')
     ], gap=4)
 
     _completeness_content
+    return
 
-
-# ===========================================================================
-# TAB CONTENT — Coverage
-# ===========================================================================
 
 @app.cell(hide_code=True)
-def _(alt, mo, nl_inst_df, oa_orgs_df, org_select, pl):
+def coverage(alt, mo, nl_inst_df, oa_orgs_df, pl):
+    # build the coverage tab: cross-source institution presence and PID completeness comparison
     # -----------------------------------------------------------------------
     # Join OpenAlex institutions with OpenAIRE organizations by ROR
     # -----------------------------------------------------------------------
@@ -648,14 +646,12 @@ def _(alt, mo, nl_inst_df, oa_orgs_df, org_select, pl):
     ], gap=4)
 
     _coverage_content
+    return
 
-
-# ===========================================================================
-# TAB CONTENT — Accuracy
-# ===========================================================================
 
 @app.cell(hide_code=True)
-def _(alt, mo, nl_inst_df, pl, works_compl_df):
+def accuracy(alt, mo, nl_inst_df, pl, works_compl_df):
+    # build the accuracy tab: identifier format validation checks (ROR, GRID, Wikidata)
     # -----------------------------------------------------------------------
     # Identifier format validation (pattern checks)
     # -----------------------------------------------------------------------
@@ -743,29 +739,27 @@ def _(alt, mo, nl_inst_df, pl, works_compl_df):
         _acc_chart,
         mo.accordion({
             'About these checks': mo.md("""
-**ROR:** Must match `https://ror.org/` followed by a 9-character alphanumeric identifier.
-Example: `https://ror.org/04dkp9463`
+    **ROR:** Must match `https://ror.org/` followed by a 9-character alphanumeric identifier.
+    Example: `https://ror.org/04dkp9463`
 
-**ORCID:** Must match pattern `0000-0000-0000-000X` (16 digits with dashes, Luhn checksum).
+    **ORCID:** Must match pattern `0000-0000-0000-000X` (16 digits with dashes, Luhn checksum).
 
-**DOI:** Must start with `10.` followed by registrant code and suffix.
+    **DOI:** Must start with `10.` followed by registrant code and suffix.
 
-**Wikidata:** Entity IDs should start with `Q` followed by digits.
+    **Wikidata:** Entity IDs should start with `Q` followed by digits.
 
-Full record-level accuracy validation (DOI resolver, ORCID API check) is planned for a future version.
+    Full record-level accuracy validation (DOI resolver, ORCID API check) is planned for a future version.
             """),
         }),
     ], gap=4)
 
     _accuracy_content
+    return
 
-
-# ===========================================================================
-# TAB CONTENT — Enrichment
-# ===========================================================================
 
 @app.cell(hide_code=True)
-def _(mo, nl_inst_df, pl, sel_ror, works_compl_df):
+def enrichment(mo, nl_inst_df, pl, works_compl_df):
+    # build the enrichment tab: prioritised recommendations to fill metadata gaps
     # -----------------------------------------------------------------------
     # Derive enrichment opportunities from completeness data
     # -----------------------------------------------------------------------
@@ -897,32 +891,26 @@ def _(mo, nl_inst_df, pl, sel_ror, works_compl_df):
     ], gap=4)
 
     _enrichment_content
+    return
 
-
-# ===========================================================================
-# Main tabs — assembled from content cells above
-# ===========================================================================
-
-# NOTE: marimo tabs require content passed inline; the cells above render
-# their own output directly into the notebook flow, ordered by the tabs
-# selector below. We use mo.ui.tabs() to let the user navigate sections.
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md("---")
+def divider(mo):
+    # render a horizontal rule to visually separate the main content from the footer
+    mo.md("""
+    ---
+    """)
+    return
 
-
-# ---------------------------------------------------------------------------
-# Footer
-# ---------------------------------------------------------------------------
 
 @app.cell(hide_code=True)
-def _(date, mo, org_select):
+def footer(date, mo, org_select):
+    # render a small footer with attribution, selected organisation, and today's date
     mo.md(f"""
-<div style="font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;">
+    <div style="font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;">
     <span>ORI Quality Dashboard · PID to Portal · SURF ORI team</span>
     <span>Organisation: {org_select.value} · Data: OpenAlex / OpenAIRE via SURF DuckLake · {date.today()}</span>
-</div>
+    </div>
     """)
     return
 
