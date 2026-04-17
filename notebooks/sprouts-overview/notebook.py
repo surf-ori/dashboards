@@ -3,7 +3,7 @@
 # dependencies = [
 #     "altair==6.0.0",
 #     "anywidget==0.9.21",
-#     "duckdb==1.5.0",
+#     "duckdb==1.5.2",
 #     "fsspec==2026.2.0",
 #     "marimo>=0.20.2",
 #     "numpy==2.4.2",
