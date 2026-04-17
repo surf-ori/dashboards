@@ -12,21 +12,20 @@
 
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="full", app_title="Dutch ORCiD Monitor")
 
-async with app.setup(hide_code=True):
-    try:
-        import micropip
-    except ModuleNotFoundError:
-        micropip = None
-
-    if micropip is not None:
-        await micropip.install(["openpyxl", "pandas"])
-
+with app.setup(hide_code=True):
     import altair as alt
     import marimo as mo
     import pandas as pd
+    try:
+        import micropip
+        await micropip.install(["openpyxl", "pandas"])
+    except ModuleNotFoundError:
+        print(f"micropip not found -- ensure openpyxl is installed by adding it to your environment")      
+
+
 
 
 @app.cell(hide_code=True)
@@ -399,10 +398,15 @@ def timeline_dataset(
     filtered_survey_data,
     metric_mode,
     metric_selector,
+    survey_data,
+    university_filter,
 ):
     # Title: Timeline Data
     # Purpose: Keep the latest university measurement per time bucket and derive
-    # both university and national-average timeline series.
+    # university, national-average, and selected-average timeline series.
+    # The "Landelijk gemiddelde" always reflects ALL universities in the
+    # dataset.  When more than one university is selected, an additional
+    # "Gemiddelde geselecteerde universiteiten" line is shown.
 
     granularity_config = {
         "Dag": {"freq": "D", "label": "Dag"},
@@ -412,6 +416,63 @@ def timeline_dataset(
         "Jaar": {"freq": "Y", "label": "Jaar"},
     }
     selected_granularity = granularity_config[date_granularity.value]
+
+    def _build_average_series(source_data, label, type_label):
+        """Aggregate *source_data* into an average series (one point per bucket)."""
+        if source_data is None or source_data.empty:
+            return pd.DataFrame()
+        measurements = source_data.copy()
+        period_idx = measurements["Datum van meting"].dt.to_period(
+            selected_granularity["freq"]
+        )
+        measurements["bucket_date"] = period_idx.dt.start_time
+        measurements = (
+            measurements.sort_values(
+                [
+                    "Selecteer je Universiteit",
+                    "bucket_date",
+                    "Tijdstempel",
+                    "Datum van meting",
+                ]
+            )
+            .drop_duplicates(
+                subset=["Selecteer je Universiteit", "bucket_date"], keep="last"
+            )
+            .copy()
+        )
+        ns = (
+            measurements.groupby(["bucket_date"], as_index=False)
+            .agg(
+                {
+                    "Datum van meting": "max",
+                    "Selecteer je Universiteit": "nunique",
+                    **{m: "mean" for m in ABSOLUTE_METRICS},
+                }
+            )
+            .rename(
+                columns={"Selecteer je Universiteit": "universities_in_average"}
+            )
+        )
+        if date_granularity.value == "Dag":
+            ns["period_label"] = ns["bucket_date"].dt.strftime("%Y-%m-%d")
+        elif date_granularity.value == "Week":
+            ns["period_label"] = (
+                "Week van " + ns["bucket_date"].dt.strftime("%Y-%m-%d")
+            )
+        elif date_granularity.value == "Maand":
+            ns["period_label"] = ns["bucket_date"].dt.strftime("%Y-%m")
+        elif date_granularity.value == "Kwartaal":
+            ns["period_label"] = (
+                "Q"
+                + ns["bucket_date"].dt.quarter.astype(str)
+                + " "
+                + ns["bucket_date"].dt.strftime("%Y")
+            )
+        else:
+            ns["period_label"] = ns["bucket_date"].dt.strftime("%Y")
+        ns["series_label"] = label
+        ns["series_type"] = type_label
+        return ns
 
     if filtered_survey_data.empty:
         timeline_data = pd.DataFrame(
@@ -490,38 +551,38 @@ def timeline_dataset(
         university_series["series_type"] = "Universiteit"
         university_series["universities_in_average"] = pd.NA
 
-        national_series = (
-            university_measurements.groupby(
-                ["bucket_date", "period_label"], as_index=False
-            )
-            .agg(
-                {
-                    "Datum van meting": "max",
-                    "Selecteer je Universiteit": "nunique",
-                    **{metric: "mean" for metric in ABSOLUTE_METRICS},
-                }
-            )
-            .rename(
-                columns={
-                    "Selecteer je Universiteit": "universities_in_average",
-                }
-            )
-        )
-        national_series["series_label"] = "Landelijk gemiddelde"
-        national_series["series_type"] = "Landelijk gemiddelde"
+        # --- Average lines ---
+        parts = [university_series.drop(columns=["Selecteer je Universiteit"])]
+        uni_labels = sorted(university_series["series_label"].dropna().unique())
 
-        timeline_data = pd.concat(
-            [
-                university_series.drop(columns=["Selecteer je Universiteit"]),
-                national_series,
-            ],
-            ignore_index=True,
-            sort=False,
+        # True national average computed from the FULL dataset.
+        national_series = _build_average_series(
+            survey_data, "Landelijk gemiddelde", "Landelijk gemiddelde"
         )
-        series_order = [
-            "Landelijk gemiddelde",
-            *sorted(university_series["series_label"].dropna().unique()),
-        ]
+        if not national_series.empty:
+            parts.append(national_series)
+            ordered = ["Landelijk gemiddelde"]
+        else:
+            ordered = []
+
+        # Average of selected universities (only when >1 selected).
+        if (
+            university_filter.value
+            and len(university_filter.value) > 1
+        ):
+            selected_avg = _build_average_series(
+                filtered_survey_data,
+                "Gemiddelde geselecteerde universiteiten",
+                "Gemiddelde geselecteerde",
+            )
+            if not selected_avg.empty:
+                parts.append(selected_avg)
+                ordered.append("Gemiddelde geselecteerde universiteiten")
+
+        ordered.extend(uni_labels)
+        series_order = ordered
+
+        timeline_data = pd.concat(parts, ignore_index=True, sort=False)
 
     # Derive the plotted metric from the per-series absolute metrics.
     if metric_mode.value == "Relatief":
@@ -727,8 +788,8 @@ def timeline_chart(
                     "series_type:N",
                     legend=None,
                     scale=alt.Scale(
-                        domain=["Landelijk gemiddelde", "Universiteit"],
-                        range=[[10, 5], [1, 0]],
+                        domain=["Landelijk gemiddelde", "Gemiddelde geselecteerde", "Universiteit"],
+                        range=[[10, 5], [5, 3], [1, 0]],
                     ),
                 ),
                 tooltip=tooltip_fields,
@@ -847,8 +908,8 @@ def timeline_chart(
                             "series_type:N",
                             legend=None,
                             scale=alt.Scale(
-                                domain=["Landelijk gemiddelde", "Universiteit"],
-                                range=[[10, 5], [1, 0]],
+                                domain=["Landelijk gemiddelde", "Gemiddelde geselecteerde", "Universiteit"],
+                                range=[[10, 5], [5, 3], [1, 0]],
                             ),
                         ),
                         tooltip=tooltip_fields,
@@ -861,7 +922,7 @@ def timeline_chart(
             [
                 mo.md("## Tijdlijn"),
                 mo.md(
-                    "Per universiteit toont de grafiek steeds de laatst ingestuurde meting binnen de gekozen periode. De lijn `Landelijk gemiddelde` is het gemiddelde van alle universiteiten die in die periode een meting hebben."
+                    "Per universiteit toont de grafiek steeds de laatst ingestuurde meting binnen de gekozen periode. De lijn `Landelijk gemiddelde` is het gemiddelde van alle universiteiten in de dataset die in die periode een meting hebben. Als je meerdere universiteiten selecteert verschijnt ook een `Gemiddelde geselecteerde universiteiten` lijn."
                 ),
                 alt.layer(*chart_layers)
                 .properties(height=400, width=600)
