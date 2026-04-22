@@ -11,6 +11,11 @@
       "sourceType": "github",
       "computedHash": "044f8cea87906e757b844a2e45ec46a28ce11144611baab5296823c8b11a9798"
     },
+    "ori-ducklake": {
+      "source": "surf-ori/agentic-tools",
+      "sourceType": "github",
+      "computedHash": "7bb959080f7414ec0837617f8d4a3c7899a3f4527535fdab28b1166451fbc42b"
+    },
     "polars": {
       "source": "davila7/claude-code-templates",
       "sourceType": "github",

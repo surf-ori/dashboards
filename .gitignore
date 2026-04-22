@@ -1,6 +1,10 @@
 _site/
 __marimo__
 .DS_Store
+.claude
+.opencode
+_bmad/
+_bmad-output/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
