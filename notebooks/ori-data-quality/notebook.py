@@ -4,24 +4,17 @@
 #     "altair==6.0.0",
 #     "duckdb==1.5.2",
 #     "marimo>=0.10.0",
-#     "mcp==1.27.0",
-#     "openai==2.31.0",
+#     "openpyxl>=3.1.0",
 #     "pandas>=2.2.0",
 #     "polars[pyarrow]==1.39.3",
 #     "pyarrow>=17.0.0",
-#     "pytest==9.0.3",
-#     "python-lsp-ruff==2.3.1",
-#     "python-lsp-server==1.14.0",
 #     "sqlglot==30.4.3",
-#     "vegafusion==2.0.3",
-#     "vl-convert-python==1.9.0.post1",
-#     "websockets==16.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.23.1"
+__generated_with = "0.23.2"
 app = marimo.App(width="full", app_title="ORI Data Quality Dashboard")
 
 
@@ -32,7 +25,7 @@ async def wasm_dependencies():
     _ = None
     if 'pyodide' in sys.modules:
         import micropip
-        await micropip.install(['polars', 'pyarrow', 'altair'])
+        await micropip.install(['polars', 'pyarrow', 'altair', 'openpyxl'])
         _ = 'wasm'
     return
 
@@ -72,10 +65,60 @@ def attach_catalog(mo, url):
 
 
 @app.cell(hide_code=True)
+async def load_nl_baseline(pl):
+    # fetch the Dutch research organisations baseline list from Zenodo (DOI: 10.5281/zenodo.18957154)
+    # and annotate each org with its Barcelona Declaration signatory status
+    import io
+    import sys
+    import openpyxl
+
+    _ZENODO_URL = 'https://zenodo.org/api/records/18957154/files/nl-orgs-baseline.xlsx/content'
+
+    # ROR IDs of NL Barcelona Declaration signatories (source: barcelona-declaration.org/signatories_by_country/)
+    _BARCELONA_RORS = {
+        'https://ror.org/02e2c7k09',  # Delft University of Technology
+        'https://ror.org/04jsz6e67',  # Dutch Research Council (NWO)
+        'https://ror.org/02w4jbg70',  # KB, National Library of the Netherlands
+        'https://ror.org/027bh9e22',  # Leiden University
+        'https://ror.org/00rbjv475',  # Netherlands eScience Center
+        'https://ror.org/043c0p156',  # Royal Netherlands Academy of Arts and Sciences (KNAW)
+        'https://ror.org/009vhk114',  # SURF
+        'https://ror.org/04dkp9463',  # University of Amsterdam
+        'https://ror.org/012p63287',  # University of Groningen
+        'https://ror.org/04pp8hn57',  # Utrecht University
+        'https://ror.org/008xxew50',  # Vrije Universiteit Amsterdam
+    }
+
+    if 'pyodide' in sys.modules:
+        import pyodide.http
+        _resp = await pyodide.http.pyfetch(_ZENODO_URL)
+        _raw = await _resp.bytes()
+    else:
+        import urllib.request
+        with urllib.request.urlopen(_ZENODO_URL) as _r:
+            _raw = _r.read()
+
+    _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
+    _ws = _wb['nl-orgs']
+    _all_rows = list(_ws.iter_rows(values_only=True))
+    _data_rows = [r for r in _all_rows[1:] if r[0] and r[3]]  # skip header + empty rows
+
+    nl_baseline_df = pl.DataFrame({
+        'full_name': [r[0] for r in _data_rows],
+        'acronym':   [r[1] or '' for r in _data_rows],
+        'grouping':  [r[3] for r in _data_rows],
+        'ror':       [r[5] if r[5] and r[5] != 'nvt' else None for r in _data_rows],
+    }).with_columns(
+        pl.col('ror').is_in(_BARCELONA_RORS).fill_null(False).alias('barcelona_signatory'),
+    )
+    return (nl_baseline_df,)
+
+
+@app.cell(hide_code=True)
 def load_nl_institutions(mo):
     # query NL education and funder institutions from the OpenAlex institutions catalog table
     nl_inst_df = mo.sql(
-        f"""
+        """
         -- Load data about Dutch Institutions in OpenAlex
         SELECT
             display_name,
@@ -198,18 +241,37 @@ def constants():
     ]
     SOURCES = ['OpenAlex', 'OpenAIRE', 'Crossref', 'ORCID', 'ROR', 'DataCite']
     PUB_TYPES = ['All', 'Journal Article', 'Conference Paper', 'Book Chapter', 'Preprint', 'Thesis', 'Report']
-    SURF_BLUE = '#009de0'
-    return CERIF_ENTITIES, PUB_TYPES, SOURCES
+    GROUPING_LABELS = {
+        'UNL':   'UNL — Research Universities',
+        'VH':    'VH — Universities of Applied Sciences',
+        'KNAW':  'KNAW — Royal Academy Institutes',
+        'NFU':   'NFU — University Medical Centres',
+        'NWO':   'NWO — Research Council',
+        'NWO-i': 'NWO-i — NWO Institutes',
+        'GOV':   'GOV — Government Research Orgs',
+        'INDP':  'INDP — Independent Institutes',
+        'UN':    'UN — Other / International',
+    }
+    return CERIF_ENTITIES, GROUPING_LABELS, PUB_TYPES, SOURCES
 
 
 @app.cell(hide_code=True)
-def ui_filters(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
-    # create multiselect widgets for organisation, CERIF entity, source, and publication type
-    org_options = nl_inst_df['display_name'].to_list()
+def ui_filters(CERIF_ENTITIES, GROUPING_LABELS, PUB_TYPES, SOURCES, mo, nl_baseline_df):
+    # create filter widgets driven by the Zenodo baseline org list
+    org_options = sorted(nl_baseline_df['full_name'].to_list())
     org_select = mo.ui.multiselect(
         options=org_options,
         value=['University of Amsterdam'],
         label=f"{mo.icon('lucide:landmark')} Organisation",
+    )
+    group_select = mo.ui.multiselect(
+        options=list(GROUPING_LABELS.keys()),
+        value=list(GROUPING_LABELS.keys()),
+        label=f"{mo.icon('lucide:layers')} Sector Group",
+    )
+    barcelona_toggle = mo.ui.switch(
+        value=False,
+        label=f"{mo.icon('lucide:award')} Barcelona Declaration signatories only",
     )
     entity_select = mo.ui.multiselect(
         options=CERIF_ENTITIES,
@@ -226,15 +288,27 @@ def ui_filters(CERIF_ENTITIES, PUB_TYPES, SOURCES, mo, nl_inst_df):
         value=['All'],
         label=f"{mo.icon('lucide:file-type')} Type",
     )
-    return entity_select, org_select, pub_type_select, source_select
+    return barcelona_toggle, entity_select, group_select, org_select, pub_type_select, source_select
 
 
 @app.cell(hide_code=True)
-def selected_org(nl_inst_df, org_select, pl):
-    # filter institutions to rows matching all selected organisations
-    sel_org = nl_inst_df.filter(pl.col('display_name').is_in(org_select.value))
-    sel_ror = sel_org['ror'][0] if sel_org.height > 0 else ''
-    return (sel_org,)
+def selected_org(barcelona_toggle, group_select, nl_baseline_df, nl_inst_df, org_select, pl):
+    # apply sector-group and Barcelona Declaration filters to the baseline
+    _filtered = nl_baseline_df
+    if group_select.value:
+        _filtered = _filtered.filter(pl.col('grouping').is_in(group_select.value))
+    if barcelona_toggle.value:
+        _filtered = _filtered.filter(pl.col('barcelona_signatory'))
+    filtered_baseline = _filtered
+
+    # resolve selected org names → RORs → OpenAlex rows (for KPI cards)
+    _sel_rors = (
+        nl_baseline_df
+        .filter(pl.col('full_name').is_in(org_select.value))
+        ['ror'].drop_nulls().to_list()
+    )
+    sel_org = nl_inst_df.filter(pl.col('ror').is_in(_sel_rors))
+    return filtered_baseline, sel_org
 
 
 @app.cell(hide_code=True)
@@ -249,39 +323,45 @@ def header(mo):
 
 
 @app.cell(hide_code=True)
-def sidebar(entity_select, mo, org_select, pub_type_select, source_select):
+def sidebar(barcelona_toggle, entity_select, group_select, mo, org_select, pub_type_select, source_select):
     # stack filter dropdowns and mount them in the marimo sidebar
-
     filters = mo.vstack([
         mo.md("### Filters"),
         mo.md("---"),
-        org_select, 
-        entity_select, 
-        source_select, 
-        pub_type_select,],
-        gap=1,
-        align='end',
-    )
-
-    mo.sidebar(filters,width="350px")
+        org_select,
+        mo.md("---"),
+        group_select,
+        barcelona_toggle,
+        mo.md("---"),
+        entity_select,
+        source_select,
+        pub_type_select,
+    ], gap=1, align='end')
+    mo.sidebar(filters, width="350px")
     return
 
 
 @app.cell(hide_code=True)
-def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
-    # build the overview tab: KPI stat cards, institutions table, and getting-started guide
-    _n_nl_unis     = nl_inst_df.height
+def overview(filtered_baseline, mo, nl_baseline_df, oa_orgs_df, org_select, pl, sel_org, total_works):
+    # build the overview tab: KPI stat cards, baseline org table, and getting-started guide
+    _n_baseline    = nl_baseline_df.height
+    _n_filtered    = filtered_baseline.height
+    _n_barcelona   = nl_baseline_df.filter(pl.col('barcelona_signatory')).height
     _n_oa_orgs     = oa_orgs_df.height
-    _total_works   = total_works
     _sel_works     = sel_org['works_count'].sum() if sel_org.height > 0 else 0
     _sel_cited     = sel_org['cited_by_count'].sum() if sel_org.height > 0 else 0
 
-    # KPI row
     _kpis = mo.hstack([
         mo.stat(
-            value=f"{_n_nl_unis}",
-            label="NL Institutions (OpenAlex)",
-            caption="Education & research type, >1k works",
+            value=f"{_n_filtered}",
+            label="NL Research Orgs (filtered)",
+            caption=f"{_n_baseline} total in Zenodo baseline",
+            bordered=True,
+        ),
+        mo.stat(
+            value=f"{_n_barcelona}",
+            label="Barcelona Declaration NL",
+            caption="Signatories matched by ROR",
             bordered=True,
         ),
         mo.stat(
@@ -310,23 +390,28 @@ def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
         ),
     ], gap=3, wrap=True)
 
-    # Org list table
-    _org_tbl_data = nl_inst_df.select([
-        pl.col('display_name').alias('Institution'),
+    _SECTOR_FULL = {
+        'UNL': 'Research Universities', 'VH': 'Univ. Applied Sciences',
+        'KNAW': 'Royal Academy Institutes', 'NFU': 'Univ. Medical Centres',
+        'NWO': 'Research Council', 'NWO-i': 'NWO Institutes',
+        'GOV': 'Government Research', 'INDP': 'Independent Institutes',
+        'UN': 'Other / International',
+    }
+    _org_tbl_data = filtered_baseline.with_columns(
+        pl.col('grouping').replace(_SECTOR_FULL).alias('Sector'),
+        pl.when(pl.col('barcelona_signatory')).then(pl.lit('✓')).otherwise(pl.lit('')).alias('Barcelona'),
+    ).select([
+        pl.col('full_name').alias('Organisation'),
+        pl.col('acronym').alias('Acronym'),
+        pl.col('Sector'),
         pl.col('ror').alias('ROR'),
-        pl.col('type').alias('Type'),
-        pl.col('works_count').alias('Works'),
-        pl.col('has_ror').alias('ROR ✓'),
-        pl.col('has_grid').alias('GRID ✓'),
-        pl.col('has_wikidata').alias('Wikidata ✓'),
-        pl.col('has_wikipedia').alias('Wikipedia ✓'),
-        pl.col('has_homepage').alias('Homepage ✓'),
+        pl.col('Barcelona'),
     ])
 
     _guide = mo.md("""
     ## Getting started
 
-    Use the **filters above** to focus your analysis on a specific organisation, CERIF entity, and source.
+    Use the **filters** (left panel) to focus on a specific organisation, sector group, or Barcelona Declaration signatories.
     The tabs below explore different aspects of data quality:
 
     - **Completeness** — which metadata fields are present, and for what share of records
@@ -340,12 +425,8 @@ def overview(mo, nl_inst_df, oa_orgs_df, org_select, pl, sel_org, total_works):
 
     _overview_content = mo.vstack([
         _kpis,
-        mo.md("### Participating NL Institutions *(source: OpenAlex)*"),
-        mo.ui.table(
-            _org_tbl_data.to_pandas(),
-            selection=None,
-            page_size=15,
-        ),
+        mo.md(f"### NL Research Organisations *(source: [Zenodo baseline](https://zenodo.org/records/18957154))* — {_n_filtered} of {_n_baseline} shown"),
+        mo.ui.table(_org_tbl_data.to_pandas(), selection=None, page_size=15),
         _guide,
     ], gap=4)
     _overview_content

@@ -17,7 +17,7 @@ python -m http.server -d _site                           # Serve built site at l
 
 ### Export
 ```bash
-uvx marimo export html-wasm notebooks/[notebook-name]/notebook.py -o _site/[name].html
+uvx marimo export html-wasm --sandbox --mode run --no-show-code notebooks/[notebook-name]/notebook.py -o _site/[name].html
 ```
 
 ### Lint & Check
@@ -38,7 +38,9 @@ uv run pytest notebooks/[notebook-name]/test_[name].py::test_func    # Single te
 Each notebook lives in `notebooks/[name]/` and consists of:
 - `notebook.py` — Marimo notebook (Python file with `@app.cell` decorators)
 - `metadata.json` — Title, image path, authors list (used by the build script to render the index page)
-- `public/` — Static assets (screenshots, data files)
+- `public/` — Static assets (screenshots, data files) referenced as `mo.notebook_location() / "public" / "file"`
+
+The repo-level `public/` directory holds shared assets (ORCID icon, GitHub logo) used by the index page template (`index.html.j2`).
 
 The build pipeline (`build.py`) reads each `metadata.json`, exports notebooks via `marimo export html-wasm`, then renders `index.html.j2` with Jinja2 into `_site/`. GitHub Actions deploys `_site/` to GitHub Pages on every push to `main`.
 
@@ -53,6 +55,26 @@ Every notebook must start with a PEP 723 inline script header:
 #     ...
 # ]
 # ///
+```
+
+**WASM setup cell:** Every notebook that uses packages not bundled by Pyodide must include an async setup cell as the first `@app.cell`:
+```python
+@app.cell(hide_code=True)
+async def wasm_dependencies():
+    import sys
+    _ = None
+    if 'pyodide' in sys.modules:
+        import micropip
+        await micropip.install(['polars', 'pyarrow', 'altair'])
+        _ = 'wasm'
+    return
+```
+
+**DuckDB / DuckLake:** Notebooks query data via `mo.sql()`, which uses a shared DuckDB connection. Attach the DuckLake catalog before querying:
+```python
+mo.sql(f"ATTACH '{url.value}' AS sprouts (TYPE ducklake, READ_ONLY); USE sprouts;")
+# then query normally:
+df = mo.sql("SELECT * FROM sprouts.schema.table LIMIT 100")
 ```
 
 **Cell output:** Marimo only renders the **last expression** in a cell. Indented/conditional expressions are silent — use ternary instead:
@@ -73,7 +95,7 @@ mo.md("shown") if condition else mo.md("also shown")
 1. Script header
 2. Imports
 3. `app = marimo.App(...)`
-4. Async/hidden setup cells
+4. Async/hidden setup cells (WASM micropip installs)
 5. Data loading
 6. UI components
 7. Visualizations
@@ -94,10 +116,19 @@ mo.md("shown") if condition else mo.md("also shown")
   "title": "Display Title",
   "image": "public/screenshot-name.png",
   "authors": [
-    { "name": "Author Name", "github": "handle", "orcid": "0000-0000-0000-0000" }
+    {
+      "name": "Author Name",
+      "github": "https://github.com/handle",
+      "orcid": "https://orcid.org/0000-0000-0000-0000"
+    }
   ],
   "format": "app"
 }
 ```
 
-`format` defaults to `"app"` (code hidden); use `"html"` for document-style notebooks.
+`github` and `orcid` must be full URLs — the index template links to them directly.
+
+`format` options:
+- `"app"` (default) — WASM export, code hidden, run mode
+- `"notebook"` — WASM export, code visible, edit mode
+- `"html"` — static HTML export (no WASM interactivity)
