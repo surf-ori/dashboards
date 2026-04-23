@@ -3,7 +3,7 @@
 # dependencies = [
 #     "altair==6.0.0",
 #     "anywidget==0.9.21",
-#     "duckdb==1.5.0",
+#     "duckdb==1.5.2",
 #     "fsspec==2026.2.0",
 #     "marimo>=0.20.2",
 #     "numpy==2.4.2",
@@ -17,8 +17,11 @@
 
 import marimo
 
-__generated_with = "0.21.1"
-app = marimo.App(width="medium", app_title="Open Research Information | Datasets Overview")
+__generated_with = "0.23.1"
+app = marimo.App(
+    width="medium",
+    app_title="Open Research Information | Datasets Overview",
+)
 
 
 @app.cell
@@ -355,7 +358,7 @@ def _(mo):
     Below you can run queries yourself, use the table names and colums you see above, and start exploring the data live!
 
     This of course will run in your browser. You have access to all the data, you are now not limited to you imagination, but the limitation now the CPU and RAM of your computer.
-          
+
     As a start, try for example the following query: `SELECT institution, avg(euro) FROM openapc.apc GROUP BY institution ORDER BY avg(euro) DESC;`
     """)
     return
@@ -370,14 +373,14 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
+def _():
     # initial_code = """SELECT * 
     # FROM openapc.apc 
     # LIMIT 100"""
 
     # editor = mo.ui.code_editor(value=initial_code, language="sql").form(submit_button_label="Run")
     # editor
-    return (editor,)
+    return
 
 
 @app.cell
@@ -387,20 +390,20 @@ def _():
 
 
 @app.cell
-def _(DuckLake, mo):
+def _():
     # ducklake = mo.ui.anywidget(DuckLake())
     # ducklake
-    return (ducklake,)
+    return
 
 
 @app.cell
-def _(ducklake, editor):
+def _():
     # ducklake.query = editor.value
     return
 
 
 @app.cell
-def _(ducklake, mo, pl):
+def _():
     # (
     #     mo.callout(ducklake.diagnostics['message'], kind='danger')
     #     if ducklake.diagnostics['status'] == 'error' else
@@ -506,7 +509,7 @@ def _(anywidget, traitlets):
       diagnostics = traitlets.Dict({"status": "", "message": ""}).tag(sync=True)
       result = traitlets.List([]).tag(sync=True)
 
-    return (DuckLake,)
+    return
 
 
 if __name__ == "__main__":

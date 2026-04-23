@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.21.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="full", app_title="Dutch ORCiD Monitor")
 
 async with app.setup(hide_code=True):
@@ -878,6 +878,18 @@ def timeline_chart(
 @app.cell
 def timeline_data_table(university_series):
     mo.ui.table(university_series)
+    return
+
+
+@app.cell
+def _(survey_data):
+    mo.ui.table(survey_data)
+    return
+
+
+@app.cell
+def _(survey_data):
+    mo.ui.table(survey_data)
     return
 
 
