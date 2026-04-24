@@ -181,6 +181,51 @@ def load_openaire_orgs(mo, pl):
 
 
 @app.cell(hide_code=True)
+def load_source_record_counts(mo, sel_rors):
+    # query record counts for selected organisations across different sources
+    # OpenAlex works (via authorships/institutions), OpenAIRE publications, CRIS publications
+
+    # OpenAlex works count for selected RORs via authorships
+    openalex_works_df = mo.sql(f"""
+    SELECT 
+        COUNT(*) AS openalex_works_count
+    FROM openalex.works,
+         UNNEST(authorships) AS authorship,
+         UNNEST(authorship.institutions) AS inst
+    WHERE inst.ror IS NOT NULL
+      AND inst.ror IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+    """, output=False)
+
+    # OpenAIRE publications count for selected RORs via author affiliations
+    openaire_pubs_df = mo.sql(f"""
+    SELECT 
+        COUNT(*) AS openaire_pubs_count
+    FROM openaire.publications,
+         UNNEST(authors) AS author
+    WHERE author.affiliations IS NOT NULL
+      AND EXISTS (
+          SELECT 1 FROM UNNEST(author.affiliations) AS aff
+          WHERE aff.organisation.pids IS NOT NULL
+            AND EXISTS (
+                SELECT 1 FROM UNNEST(aff.organisation.pids) AS pid
+                WHERE pid.scheme = 'ROR' 
+                  AND pid.value IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+            )
+      )
+    """, output=False)
+
+    # CRIS publications count for selected RORs via repository_info.ror
+    cris_pubs_df = mo.sql(f"""
+    SELECT 
+        COUNT(*) AS cris_pubs_count
+    FROM cris.publications
+    WHERE repository_info.ror IS NOT NULL
+      AND repository_info.ror IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+    """, output=False)
+    return cris_pubs_df, openaire_pubs_df, openalex_works_df
+
+
+@app.cell(hide_code=True)
 def load_works_completeness(mo, pl):
     # aggregate field-level completeness from first OpenAlex works shard (data_0) via direct parquet read
     # the full works table spans 732 files; querying data_0 only keeps this cell fast
@@ -328,7 +373,7 @@ def selected_org(
         ['ror'].drop_nulls().to_list()
     )
     sel_org = nl_inst_df.filter(pl.col('ror').is_in(_sel_rors))
-    return filtered_baseline, sel_org
+    return filtered_baseline, sel_org, _sel_rors
 
 
 @app.cell(hide_code=True)
@@ -371,21 +416,25 @@ def sidebar(
 
 @app.cell(hide_code=True)
 def overview(
+    cris_pubs_df,
     filtered_baseline,
     mo,
     nl_baseline_df,
     oa_orgs_df,
-    org_select,
+    openaire_pubs_df,
+    openalex_works_df,
     pl,
-    sel_org,
 ):
     # build the overview tab: KPI stat cards, baseline org table, and getting-started guide
     _n_baseline    = nl_baseline_df.height
     _n_filtered    = filtered_baseline.height
     _n_barcelona   = nl_baseline_df.filter(pl.col('barcelona_signatory')).height
     _n_oa_orgs     = oa_orgs_df.height
-    _sel_works     = sel_org['works_count'].sum() if sel_org.height > 0 else 0
-    _sel_cited     = sel_org['cited_by_count'].sum() if sel_org.height > 0 else 0
+
+    # Get record counts from sources
+    _openalex_works = openalex_works_df['openalex_works_count'][0] if openalex_works_df.height > 0 else 0
+    _openaire_pubs = openaire_pubs_df['openaire_pubs_count'][0] if openaire_pubs_df.height > 0 else 0
+    _cris_pubs = cris_pubs_df['cris_pubs_count'][0] if cris_pubs_df.height > 0 else 0
 
     _kpis = mo.hstack([
         mo.stat(
@@ -401,21 +450,21 @@ def overview(
             bordered=True,
         ),
         mo.stat(
-            value=f"{_n_oa_orgs:,}",
-            label="NL Orgs in OpenAIRE",
-            caption="With any metadata",
+            value=f"{_openalex_works:,}",
+            label="OpenAlex Works",
+            caption="Selected orgs via authorships",
             bordered=True,
         ),
         mo.stat(
-            value=f"{_sel_works:,}",
-            label=f"Works — {', '.join(org_select.value)[:30] or '(none)'}",
-            caption="OpenAlex publication count",
+            value=f"{_openaire_pubs:,}",
+            label="OpenAIRE Publications",
+            caption="Selected orgs via affiliations",
             bordered=True,
         ),
         mo.stat(
-            value=f"{_sel_cited:,}",
-            label="Cited by (selected org)",
-            caption="Total citations in OpenAlex",
+            value=f"{_cris_pubs:,}",
+            label="CRIS Publications",
+            caption="Selected orgs via repository",
             bordered=True,
         ),
         mo.stat(
@@ -478,6 +527,7 @@ def completeness(
     org_select,
     pl,
     sel_org,
+    _sel_rors,
     works_compl_df,
 ):
     # build the completeness tab: publication field completeness chart and institution identifier completeness
