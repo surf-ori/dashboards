@@ -181,9 +181,16 @@ def load_openaire_orgs(mo, pl):
 
 
 @app.cell(hide_code=True)
-def load_source_record_counts(mo, sel_rors):
+def load_source_record_counts(mo, nl_baseline_df, org_select, pl):
     # query record counts for selected organisations across different sources
     # OpenAlex works (via authorships/institutions), OpenAIRE publications, CRIS publications
+
+    # Get selected RORs from org selection
+    _sel_rors = (
+        nl_baseline_df
+        .filter(pl.col('full_name').is_in(org_select.value))
+        ['ror'].drop_nulls().to_list()
+    )
 
     # OpenAlex works count for selected RORs via authorships
     openalex_works_df = mo.sql(f"""
@@ -193,7 +200,7 @@ def load_source_record_counts(mo, sel_rors):
          UNNEST(authorships) AS authorship,
          UNNEST(authorship.institutions) AS inst
     WHERE inst.ror IS NOT NULL
-      AND inst.ror IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+      AND inst.ror IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
     """, output=False)
 
     # OpenAIRE publications count for selected RORs via author affiliations
@@ -209,7 +216,7 @@ def load_source_record_counts(mo, sel_rors):
             AND EXISTS (
                 SELECT 1 FROM UNNEST(aff.organisation.pids) AS pid
                 WHERE pid.scheme = 'ROR' 
-                  AND pid.value IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+                  AND pid.value IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
             )
       )
     """, output=False)
@@ -220,7 +227,7 @@ def load_source_record_counts(mo, sel_rors):
         COUNT(*) AS cris_pubs_count
     FROM cris.publications
     WHERE repository_info.ror IS NOT NULL
-      AND repository_info.ror IN ({', '.join(f"'{ror}'" for ror in sel_rors) if sel_rors else "''"})
+      AND repository_info.ror IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
     """, output=False)
     return cris_pubs_df, openaire_pubs_df, openalex_works_df
 
@@ -373,7 +380,7 @@ def selected_org(
         ['ror'].drop_nulls().to_list()
     )
     sel_org = nl_inst_df.filter(pl.col('ror').is_in(_sel_rors))
-    return filtered_baseline, sel_org, _sel_rors
+    return filtered_baseline, sel_org
 
 
 @app.cell(hide_code=True)
@@ -527,7 +534,6 @@ def completeness(
     org_select,
     pl,
     sel_org,
-    _sel_rors,
     works_compl_df,
 ):
     # build the completeness tab: publication field completeness chart and institution identifier completeness
