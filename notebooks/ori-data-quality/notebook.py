@@ -424,6 +424,7 @@ def overview(
     oa_orgs_df,
     openaire_pubs_df,
     openalex_works_df,
+    org_select,
     pl,
 ):
     # build the overview tab: KPI stat cards, baseline org table, and getting-started guide
@@ -436,6 +437,13 @@ def overview(
     _openalex_works = openalex_works_df['openalex_works_count'][0] if openalex_works_df.height > 0 else 0
     _openaire_pubs = openaire_pubs_df['openaire_pubs_count'][0] if openaire_pubs_df.height > 0 else 0
     _cris_pubs = cris_pubs_df['cris_pubs_count'][0] if cris_pubs_df.height > 0 else 0
+
+    # Build caption showing selected institution(s), truncated if too many
+    _sel = org_select.value
+    _sel_caption = (
+        ', '.join(_sel[:2]) + (f' +{len(_sel)-2} more' if len(_sel) > 2 else '')
+        if _sel else '(none selected)'
+    )
 
     _kpis = mo.hstack([
         mo.stat(
@@ -453,19 +461,19 @@ def overview(
         mo.stat(
             value=f"{_openalex_works:,}",
             label="OpenAlex Works",
-            caption="Selected orgs via authorships",
+            caption=_sel_caption,
             bordered=True,
         ),
         mo.stat(
             value=f"{_openaire_pubs:,}",
             label="OpenAIRE Publications",
-            caption="Selected orgs via affiliations",
+            caption=_sel_caption,
             bordered=True,
         ),
         mo.stat(
             value=f"{_cris_pubs:,}",
             label="CRIS Publications",
-            caption="Selected orgs via repository",
+            caption=_sel_caption,
             bordered=True,
         ),
         mo.stat(
