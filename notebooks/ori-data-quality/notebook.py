@@ -194,13 +194,20 @@ def load_source_record_counts(mo, nl_baseline_df, org_select, pl):
 
     _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
 
-    # OpenAlex works count via double UNNEST in FROM (authorships → institutions)
+    # DuckDB ducklake UNNEST quirk: struct fields are only accessible through the
+    # literal alias "unnest" — any other alias fails with "Table X has no column Y".
+    # Use list_filter lambda on institutions[] to avoid a second UNNEST entirely.
+    _inst_filter = (
+        'x -> (' + ' OR '.join(f"x.ror = '{r}'" for r in _sel_rors) + ')'
+        if _sel_rors else 'x -> false'
+    )
+
+    # OpenAlex works count: UNNEST authorships, then list_filter institutions by ROR
     openalex_works_df = mo.sql(f"""
     SELECT COUNT(DISTINCT w.id) AS openalex_works_count
     FROM openalex.works AS w,
-         UNNEST(w.authorships) AS a,
-         UNNEST(a.institutions) AS inst
-    WHERE inst.ror IN ({_rors_clause})
+         UNNEST(w.authorships) AS unnest
+    WHERE array_length(list_filter(unnest.institutions, {_inst_filter})) > 0
     """, output=False)
 
     # OpenAIRE publications count via organizations[].pids (list_filter avoids second UNNEST)
