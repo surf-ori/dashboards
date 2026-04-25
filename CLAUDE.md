@@ -110,17 +110,25 @@ The ORI DuckLake uses DuckDB ≥ 1.5.2 with the `ducklake` extension. Key schema
 - **openalex.works.authorships[].institutions[]** has `.ror` as a full URI.
 - **cris.publications.repository_info.ror** is a direct struct field (full ROR URI).
 
-### Correct UNNEST patterns
+### Critical UNNEST alias quirk (DuckDB + ducklake extension)
 
+After `UNNEST(arr) AS alias`, struct fields are **only** accessible via the literal name `unnest` — any other alias raises `Table "alias" does not have a column`. This applies regardless of what alias you choose.
+
+**Wrong (will error):**
 ```sql
--- Two-level UNNEST in FROM clause (works: authorships → institutions)
+UNNEST(w.authorships) AS a,
+UNNEST(a.institutions) AS inst   -- fails: "Table a does not have column institutions"
+```
+
+**Correct: use `AS unnest` and avoid double-UNNEST with `list_filter`:**
+```sql
+-- OpenAlex: works linked to institutions via authorships
 SELECT COUNT(DISTINCT w.id)
 FROM openalex.works AS w,
-     UNNEST(w.authorships) AS a,
-     UNNEST(a.institutions) AS inst
-WHERE inst.ror IN ('https://ror.org/04dkp9463');
+     UNNEST(w.authorships) AS unnest
+WHERE array_length(list_filter(unnest.institutions, x -> x.ror = 'https://ror.org/04dkp9463')) > 0;
 
--- Single UNNEST + list_filter lambda to inspect nested pids (avoids second UNNEST)
+-- OpenAIRE: publications linked to NL institutions via organizations[].pids
 SELECT COUNT(DISTINCT pub.id)
 FROM openaire.publications AS pub,
      UNNEST(pub.organizations) AS unnest
