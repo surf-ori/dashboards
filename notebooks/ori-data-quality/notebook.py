@@ -182,8 +182,7 @@ def load_openaire_orgs(mo, pl):
 
 @app.cell(hide_code=True)
 def load_source_record_counts(mo, nl_baseline_df, oa_orgs_df, org_select, pl):
-    # Fast record counts for selected organisations across sources.
-    # Avoid scanning the huge works/publications tables (364 M and 206 M rows).
+    # Record counts for selected organisations across three sources.
 
     _sel_rors = (
         nl_baseline_df
@@ -193,21 +192,30 @@ def load_source_record_counts(mo, nl_baseline_df, oa_orgs_df, org_select, pl):
     _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
 
     # OpenAlex: SUM pre-computed works_count from the institutions table (120 K rows).
-    # Scanning openalex.works (364 M rows) to count via UNNEST took 15+ minutes.
+    # Direct scan of openalex.works (364 M rows) via UNNEST took 15+ minutes.
     openalex_works_df = mo.sql(f"""
     SELECT COALESCE(SUM(works_count), 0) AS openalex_works_count
     FROM openalex.institutions
     WHERE ror IN ({_rors_clause})
     """, output=False)
 
-    # OpenAIRE: count matched organisations from oa_orgs_df (already in memory, 448 K rows).
-    # Scanning openaire.publications (206 M rows) via UNNEST took 15+ minutes.
-    # The org count gives an idea of OpenAIRE presence without a full table scan.
-    openaire_pubs_df = (
+    # OpenAIRE publications:
+    # Step 1 — resolve ROR → OpenAIRE org ID from oa_orgs_df (in memory, no query).
+    _sel_oa_ids = (
         oa_orgs_df
         .filter(pl.col('ror').is_in(_sel_rors))
-        .select(pl.len().alias('openaire_pubs_count'))
+        ['openaire_id'].drop_nulls().to_list()
     )
+    _oa_ids_clause = ', '.join(f"'{i}'" for i in _sel_oa_ids) if _sel_oa_ids else "''"
+    # Step 2 — count publications via organizations[].id (simpler scalar equality,
+    # faster than a lambda over nested pids[]; still a 206 M row scan — no index exists).
+    # relations table (225 GB) offers no speed advantage: same full-scan without partitioning.
+    openaire_pubs_df = mo.sql(f"""
+    SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
+    FROM openaire.publications AS pub,
+         UNNEST(pub.organizations) AS unnest
+    WHERE unnest.id IN ({_oa_ids_clause})
+    """, output=False)
 
     # CRIS: COUNT(*) on 2.4 M rows filtered by repository_info.ror — fast.
     cris_pubs_df = mo.sql(f"""
@@ -464,7 +472,7 @@ def overview(
         ),
         mo.stat(
             value=f"{_openaire_pubs:,}",
-            label="OpenAIRE Orgs matched",
+            label="OpenAIRE Publications",
             caption=_sel_caption,
             bordered=True,
         ),
@@ -1096,3 +1104,4 @@ def footer(date, mo, org_select):
 
 if __name__ == "__main__":
     app.run()
+
