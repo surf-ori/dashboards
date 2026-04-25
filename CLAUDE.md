@@ -101,10 +101,44 @@ mo.md("shown") if condition else mo.md("also shown")
 7. Visualizations
 8. Output/display
 
+## DuckLake / DuckDB SQL patterns
+
+The ORI DuckLake uses DuckDB ≥ 1.5.2 with the `ducklake` extension. Key schema facts:
+
+- **openaire.publications.authors[]** has only `fullName, name, surname, rank, pid.id.{scheme,value}` — **no affiliations field**. Use `organizations[]` at the publication level for institution-based filtering.
+- **openaire.publications.organizations[]** has `.legalName`, `.pids[{scheme,value}]`. Scheme `'ROR'` (uppercase), value is a full URI (`https://ror.org/...`).
+- **openalex.works.authorships[].institutions[]** has `.ror` as a full URI.
+- **cris.publications.repository_info.ror** is a direct struct field (full ROR URI).
+
+### Correct UNNEST patterns
+
+```sql
+-- Two-level UNNEST in FROM clause (works: authorships → institutions)
+SELECT COUNT(DISTINCT w.id)
+FROM openalex.works AS w,
+     UNNEST(w.authorships) AS a,
+     UNNEST(a.institutions) AS inst
+WHERE inst.ror IN ('https://ror.org/04dkp9463');
+
+-- Single UNNEST + list_filter lambda to inspect nested pids (avoids second UNNEST)
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(unnest.pids, x -> x.scheme = 'ROR' AND x.value = 'https://ror.org/04dkp9463')) > 0;
+```
+
+### Linting in this repo
+
+`uvx` is not on PATH in the sandbox — use `uv tool run <tool>` instead:
+```bash
+uv tool run ruff check notebooks/[name]/notebook.py
+uv tool run marimo check notebooks/[name]/notebook.py
+```
+
 ## Code Style
 
 - Python 3.12+ (`|` union syntax, built-in `list`/`dict` generics)
-- Use `uv` for all dependency management; `uvx` for one-off tool runs
+- Use `uv` for all dependency management; `uv tool run` for one-off tool runs (`uvx` may not be on PATH)
 - Line length: 88 chars (ruff/Black compatible)
 - Single quotes for strings unless double quotes are required
 - Standard library → third-party → local import ordering

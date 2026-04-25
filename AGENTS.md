@@ -256,9 +256,50 @@ def _(mo, condition):
 ## Development Workflow
 
 1. Create a new branch for your changes
-2. Edit notebooks using `uvx marimo edit notebooks/[name]/notebook.py`
-3. Run linting: `uvx ruff check notebooks/`
-4. Run marimo check: `uvx marimo check notebooks/[name]/notebook.py`
+2. Edit notebooks using `uv tool run marimo edit notebooks/[name]/notebook.py`
+3. Run linting: `uv tool run ruff check notebooks/[name]/notebook.py`
+4. Run marimo check: `uv tool run marimo check notebooks/[name]/notebook.py`
 5. Test locally: `uv run .github/scripts/build.py --output-dir _site`
 6. Commit and push changes
 7. Deploy happens automatically on push to main branch
+
+**Note:** `uvx` may not be on PATH in CI or sandbox environments. Use `uv tool run <tool>` as the reliable alternative.
+
+## DuckLake SQL — Known Schema Facts and Gotchas
+
+These apply to the SURF ORI DuckLake (DuckDB 1.5.2 + ducklake extension).
+
+### openaire.publications schema
+
+- `authors[]` has: `fullName, name, surname, rank, pid.id.{scheme,value}` — **no affiliations field**
+- `organizations[]` at the publication level is the correct way to link publications to institutions: `.legalName`, `.pids[{scheme,value}]` with scheme `'ROR'` (uppercase), value is a full URI
+
+### Correct UNNEST patterns (DuckDB 1.5.x)
+
+Two-level UNNEST in the FROM clause works reliably:
+```sql
+-- OpenAlex: works linked to institutions via authorships
+SELECT COUNT(DISTINCT w.id)
+FROM openalex.works AS w,
+     UNNEST(w.authorships) AS a,
+     UNNEST(a.institutions) AS inst
+WHERE inst.ror IN ('https://ror.org/04dkp9463');
+```
+
+For filtering nested list-of-structs without a second UNNEST, use `list_filter` with a lambda:
+```sql
+-- OpenAIRE: publications linked to NL institutions via organizations[].pids
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(
+    unnest.pids,
+    x -> x.scheme = 'ROR' AND x.value = 'https://ror.org/04dkp9463'
+)) > 0;
+```
+
+### Skills and MCP server location
+
+- Agent skills live in `.agents/skills/` (not `.claude/skills/`)
+- MCP server config: `.claude/settings.json` with `mcpServers`
+- The `ori-ducklake-sprouts` MCP server is installed via `uv tool install mcp-servers/ori-ducklake-mcp/`
