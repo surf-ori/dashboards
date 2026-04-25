@@ -308,21 +308,9 @@ def constants():
 
 
 @app.cell(hide_code=True)
-def ui_filters(
-    CERIF_ENTITIES,
-    GROUPING_LABELS,
-    PUB_TYPES,
-    SOURCES,
-    mo,
-    nl_baseline_df,
-):
-    # create filter widgets driven by the Zenodo baseline org list
-    org_options = sorted(nl_baseline_df['full_name'].to_list())
-    org_select = mo.ui.multiselect(
-        options=org_options,
-        value=['University of Amsterdam'],
-        label=f"{mo.icon('lucide:landmark')} Organisation",
-    )
+def ui_base_filters(CERIF_ENTITIES, GROUPING_LABELS, PUB_TYPES, SOURCES, mo):
+    # create sector/type/source widgets — these must exist before org_select so that
+    # org_select options can be filtered reactively by group_select and barcelona_toggle
     group_select = mo.ui.multiselect(
         options=list(GROUPING_LABELS.keys()),
         value=list(GROUPING_LABELS.keys()),
@@ -351,10 +339,27 @@ def ui_filters(
         barcelona_toggle,
         entity_select,
         group_select,
-        org_select,
         pub_type_select,
         source_select,
     )
+
+
+@app.cell(hide_code=True)
+def ui_org_select(barcelona_toggle, group_select, mo, nl_baseline_df, pl):
+    # build org_select options filtered by the current sector group and Barcelona toggle
+    _opts = nl_baseline_df
+    if group_select.value:
+        _opts = _opts.filter(pl.col('grouping').is_in(group_select.value))
+    if barcelona_toggle.value:
+        _opts = _opts.filter(pl.col('barcelona_signatory'))
+    _org_options = sorted(_opts['full_name'].to_list())
+    _default = [v for v in ['University of Amsterdam'] if v in _org_options]
+    org_select = mo.ui.multiselect(
+        options=_org_options,
+        value=_default,
+        label=f"{mo.icon('lucide:landmark')} Organisation",
+    )
+    return (org_select,)
 
 
 @app.cell(hide_code=True)
