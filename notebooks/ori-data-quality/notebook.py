@@ -14,7 +14,7 @@
 
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.3"
 app = marimo.App(width="full", app_title="ORI Data Quality Dashboard")
 
 
@@ -117,7 +117,7 @@ async def load_nl_baseline(io, openpyxl, pl, sys):
 def load_nl_institutions(mo):
     # query NL education and funder institutions from the OpenAlex institutions catalog table
     nl_inst_df = mo.sql(
-        f"""
+        """
         -- Load data about Dutch Institutions in OpenAlex
         SELECT
             display_name,
@@ -192,42 +192,36 @@ def load_source_record_counts(mo, nl_baseline_df, org_select, pl):
         ['ror'].drop_nulls().to_list()
     )
 
-    # OpenAlex works count for selected RORs via authorships
+    _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
+
+    # OpenAlex works count via double UNNEST in FROM (authorships → institutions)
     openalex_works_df = mo.sql(f"""
-    SELECT 
-        COUNT(*) AS openalex_works_count
-    FROM openalex.works,
-         UNNEST(authorships) AS authorship,
-         UNNEST(authorship.institutions) AS inst
-    WHERE inst.ror IS NOT NULL
-      AND inst.ror IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
+    SELECT COUNT(DISTINCT w.id) AS openalex_works_count
+    FROM openalex.works AS w,
+         UNNEST(w.authorships) AS a,
+         UNNEST(a.institutions) AS inst
+    WHERE inst.ror IN ({_rors_clause})
     """, output=False)
 
-    # OpenAIRE publications count for selected RORs via author affiliations
+    # OpenAIRE publications count via organizations[].pids (list_filter avoids second UNNEST)
+    # openaire.publications.authors[] has no affiliations — use organizations[] at pub level
+    _ror_filter = (
+        'x -> x.scheme = \'ROR\' AND (' + ' OR '.join(f"x.value = '{r}'" for r in _sel_rors) + ')'
+        if _sel_rors else 'x -> false'
+    )
     openaire_pubs_df = mo.sql(f"""
-    SELECT 
-        COUNT(*) AS openaire_pubs_count
-    FROM openaire.publications,
-         UNNEST(authors) AS author
-    WHERE author.affiliations IS NOT NULL
-      AND EXISTS (
-          SELECT 1 FROM UNNEST(author.affiliations) AS aff
-          WHERE aff.organisation.pids IS NOT NULL
-            AND EXISTS (
-                SELECT 1 FROM UNNEST(aff.organisation.pids) AS pid
-                WHERE pid.scheme = 'ROR' 
-                  AND pid.value IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
-            )
-      )
+    SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
+    FROM openaire.publications AS pub,
+         UNNEST(pub.organizations) AS unnest
+    WHERE array_length(list_filter(unnest.pids, {_ror_filter})) > 0
     """, output=False)
 
     # CRIS publications count for selected RORs via repository_info.ror
     cris_pubs_df = mo.sql(f"""
-    SELECT 
-        COUNT(*) AS cris_pubs_count
+    SELECT COUNT(*) AS cris_pubs_count
     FROM cris.publications
     WHERE repository_info.ror IS NOT NULL
-      AND repository_info.ror IN ({', '.join(f"'{ror}'" for ror in _sel_rors) if _sel_rors else "''"})
+      AND repository_info.ror IN ({_rors_clause})
     """, output=False)
     return cris_pubs_df, openaire_pubs_df, openalex_works_df
 
