@@ -106,7 +106,7 @@ mo.md("shown") if condition else mo.md("also shown")
 The ORI DuckLake uses DuckDB ≥ 1.5.2 with the `ducklake` extension. Key schema facts:
 
 - **openaire.publications.authors[]** has only `fullName, name, surname, rank, pid.id.{scheme,value}` — **no affiliations field**. Use `organizations[]` at the publication level for institution-based filtering.
-- **openaire.publications.organizations[]** has `.legalName`, `.pids[{scheme,value}]`. Scheme `'ROR'` (uppercase), value is a full URI (`https://ror.org/...`).
+- **openaire.publications.organizations[]** has `.legalName` and `.pids[{scheme,value}]` — **no `.id` field**. Do not try to filter by `unnest.id`; use `list_filter` on `pids` with `scheme = 'ROR'` instead. Scheme is uppercase `'ROR'`, value is a full URI (`https://ror.org/...`).
 - **openalex.works.authorships[].institutions[]** has `.ror` as a full URI.
 - **cris.publications.repository_info.ror** is a direct struct field (full ROR URI).
 
@@ -128,12 +128,35 @@ FROM openalex.works AS w,
      UNNEST(w.authorships) AS unnest
 WHERE array_length(list_filter(unnest.institutions, x -> x.ror = 'https://ror.org/04dkp9463')) > 0;
 
--- OpenAIRE: publications linked to NL institutions via organizations[].pids
+-- OpenAIRE: publications for a single institution via organizations[].pids (no .id field exists)
 SELECT COUNT(DISTINCT pub.id)
 FROM openaire.publications AS pub,
      UNNEST(pub.organizations) AS unnest
 WHERE array_length(list_filter(unnest.pids, x -> x.scheme = 'ROR' AND x.value = 'https://ror.org/04dkp9463')) > 0;
+
+-- OpenAIRE: multiple institutions — use list_contains() inside the lambda
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(
+    unnest.pids,
+    x -> x.scheme = 'ROR' AND list_contains(['https://ror.org/aaa', 'https://ror.org/bbb'], x.value)
+)) > 0;
 ```
+
+### Performance facts (DuckLake on SURF Object Store)
+
+No indexes or partition pruning exist for nested fields. Every UNNEST query is a full table scan over Parquet files fetched via HTTPS. Approximate costs:
+
+| Table | Rows | Scan time |
+|---|---|---|
+| `openalex.institutions` | 120 K | < 1 s |
+| `cris.publications` | 2.4 M | seconds |
+| `openaire.publications` | 206 M | 15–30 min |
+| `openalex.works` | 364 M | 15+ min |
+| `openaire.relations` | large | no speed advantage over publications |
+
+Prefer pre-computed fields: `openalex.institutions.works_count` gives institution publication counts in < 1 s versus 15+ min for a direct scan of `openalex.works`.
 
 ### Linting in this repo
 

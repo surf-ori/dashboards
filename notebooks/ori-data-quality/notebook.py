@@ -181,7 +181,7 @@ def load_openaire_orgs(mo, pl):
 
 
 @app.cell(hide_code=True)
-def load_source_record_counts(mo, nl_baseline_df, oa_orgs_df, org_select, pl):
+def load_source_record_counts(mo, nl_baseline_df, org_select, pl):
     # Record counts for selected organisations across three sources.
 
     _sel_rors = (
@@ -190,6 +190,8 @@ def load_source_record_counts(mo, nl_baseline_df, oa_orgs_df, org_select, pl):
         ['ror'].drop_nulls().to_list()
     )
     _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
+    # DuckDB list literal for list_contains() inside lambdas
+    _rors_list = '[' + ', '.join(f"'{r}'" for r in _sel_rors) + ']' if _sel_rors else "['']"
 
     # OpenAlex: SUM pre-computed works_count from the institutions table (120 K rows).
     # Direct scan of openalex.works (364 M rows) via UNNEST took 15+ minutes.
@@ -199,22 +201,17 @@ def load_source_record_counts(mo, nl_baseline_df, oa_orgs_df, org_select, pl):
     WHERE ror IN ({_rors_clause})
     """, output=False)
 
-    # OpenAIRE publications:
-    # Step 1 — resolve ROR → OpenAIRE org ID from oa_orgs_df (in memory, no query).
-    _sel_oa_ids = (
-        oa_orgs_df
-        .filter(pl.col('ror').is_in(_sel_rors))
-        ['openaire_id'].drop_nulls().to_list()
-    )
-    _oa_ids_clause = ', '.join(f"'{i}'" for i in _sel_oa_ids) if _sel_oa_ids else "''"
-    # Step 2 — count publications via organizations[].id (simpler scalar equality,
-    # faster than a lambda over nested pids[]; still a 206 M row scan — no index exists).
-    # relations table (225 GB) offers no speed advantage: same full-scan without partitioning.
+    # OpenAIRE publications: publications.organizations[] has .legalName and .pids[{scheme,value}]
+    # but no .id field — filter directly by ROR in organizations[].pids.
+    # Still a 206 M row scan; relations table (225 GB) offers no speed advantage without indexes.
     openaire_pubs_df = mo.sql(f"""
     SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
     FROM openaire.publications AS pub,
          UNNEST(pub.organizations) AS unnest
-    WHERE unnest.id IN ({_oa_ids_clause})
+    WHERE array_length(list_filter(
+        unnest.pids,
+        x -> x.scheme = 'ROR' AND list_contains({_rors_list}, x.value)
+    )) > 0
     """, output=False)
 
     # CRIS: COUNT(*) on 2.4 M rows filtered by repository_info.ror — fast.

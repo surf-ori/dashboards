@@ -272,23 +272,28 @@ These apply to the SURF ORI DuckLake (DuckDB 1.5.2 + ducklake extension).
 ### openaire.publications schema
 
 - `authors[]` has: `fullName, name, surname, rank, pid.id.{scheme,value}` — **no affiliations field**
-- `organizations[]` at the publication level is the correct way to link publications to institutions: `.legalName`, `.pids[{scheme,value}]` with scheme `'ROR'` (uppercase), value is a full URI
+- `organizations[]` at the publication level is the correct way to link publications to institutions: `.legalName`, `.pids[{scheme,value}]` — **no `.id` field** (do not try `unnest.id`, it will error)
+- Filter by institution via `list_filter` on `organizations[].pids` with `scheme = 'ROR'` (uppercase), value is a full URI
 
-### Correct UNNEST patterns (DuckDB 1.5.x)
+### Critical UNNEST alias quirk (DuckDB + ducklake extension)
 
-Two-level UNNEST in the FROM clause works reliably:
+After `UNNEST(arr) AS alias`, struct fields are **only** accessible via the literal name `unnest`. Any other alias raises `Table "alias" does not have a column`. **Always use `AS unnest`.**
+
+**Wrong — double UNNEST with custom alias (errors):**
 ```sql
--- OpenAlex: works linked to institutions via authorships
-SELECT COUNT(DISTINCT w.id)
-FROM openalex.works AS w,
-     UNNEST(w.authorships) AS a,
-     UNNEST(a.institutions) AS inst
-WHERE inst.ror IN ('https://ror.org/04dkp9463');
+UNNEST(w.authorships) AS a,
+UNNEST(a.institutions) AS inst   -- fails: Table 'a' does not have column 'institutions'
 ```
 
-For filtering nested list-of-structs without a second UNNEST, use `list_filter` with a lambda:
+**Correct — single UNNEST + `list_filter` for nested arrays:**
 ```sql
--- OpenAIRE: publications linked to NL institutions via organizations[].pids
+-- OpenAlex: works for an institution
+SELECT COUNT(DISTINCT w.id)
+FROM openalex.works AS w,
+     UNNEST(w.authorships) AS unnest
+WHERE array_length(list_filter(unnest.institutions, x -> x.ror = 'https://ror.org/04dkp9463')) > 0;
+
+-- OpenAIRE: publications for a single institution (organizations[].pids, no .id field)
 SELECT COUNT(DISTINCT pub.id)
 FROM openaire.publications AS pub,
      UNNEST(pub.organizations) AS unnest
@@ -296,7 +301,30 @@ WHERE array_length(list_filter(
     unnest.pids,
     x -> x.scheme = 'ROR' AND x.value = 'https://ror.org/04dkp9463'
 )) > 0;
+
+-- OpenAIRE: multiple institutions — use list_contains() inside the lambda
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(
+    unnest.pids,
+    x -> x.scheme = 'ROR' AND list_contains(['https://ror.org/aaa', 'https://ror.org/bbb'], x.value)
+)) > 0;
 ```
+
+### Performance facts (DuckLake on SURF Object Store)
+
+No indexes or partition pruning for nested fields — every UNNEST query is a full Parquet scan over HTTPS:
+
+| Table | Rows | Approx. scan time |
+|---|---|---|
+| `openalex.institutions` | 120 K | < 1 s |
+| `cris.publications` | 2.4 M | seconds |
+| `openaire.publications` | 206 M | 15–30 min |
+| `openalex.works` | 364 M | 15+ min |
+| `openaire.relations` | large | no faster than publications |
+
+Prefer pre-computed fields where possible: `openalex.institutions.works_count` gives publication counts per institution in < 1 s.
 
 ### Skills and MCP server location
 
