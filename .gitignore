@@ -5,6 +5,7 @@ __marimo__
 .opencode
 _bmad/
 _bmad-output/
+.tmp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
