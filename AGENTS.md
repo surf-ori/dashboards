@@ -256,9 +256,78 @@ def _(mo, condition):
 ## Development Workflow
 
 1. Create a new branch for your changes
-2. Edit notebooks using `uvx marimo edit notebooks/[name]/notebook.py`
-3. Run linting: `uvx ruff check notebooks/`
-4. Run marimo check: `uvx marimo check notebooks/[name]/notebook.py`
+2. Edit notebooks using `uv tool run marimo edit notebooks/[name]/notebook.py`
+3. Run linting: `uv tool run ruff check notebooks/[name]/notebook.py`
+4. Run marimo check: `uv tool run marimo check notebooks/[name]/notebook.py`
 5. Test locally: `uv run .github/scripts/build.py --output-dir _site`
 6. Commit and push changes
 7. Deploy happens automatically on push to main branch
+
+**Note:** `uvx` may not be on PATH in CI or sandbox environments. Use `uv tool run <tool>` as the reliable alternative.
+
+## DuckLake SQL — Known Schema Facts and Gotchas
+
+These apply to the SURF ORI DuckLake (DuckDB 1.5.2 + ducklake extension).
+
+### openaire.publications schema
+
+- `authors[]` has: `fullName, name, surname, rank, pid.id.{scheme,value}` — **no affiliations field**
+- `organizations[]` at the publication level is the correct way to link publications to institutions: `.legalName`, `.pids[{scheme,value}]` — **no `.id` field** (do not try `unnest.id`, it will error)
+- Filter by institution via `list_filter` on `organizations[].pids` with `scheme = 'ROR'` (uppercase), value is a full URI
+
+### Critical UNNEST alias quirk (DuckDB + ducklake extension)
+
+After `UNNEST(arr) AS alias`, struct fields are **only** accessible via the literal name `unnest`. Any other alias raises `Table "alias" does not have a column`. **Always use `AS unnest`.**
+
+**Wrong — double UNNEST with custom alias (errors):**
+```sql
+UNNEST(w.authorships) AS a,
+UNNEST(a.institutions) AS inst   -- fails: Table 'a' does not have column 'institutions'
+```
+
+**Correct — single UNNEST + `list_filter` for nested arrays:**
+```sql
+-- OpenAlex: works for an institution
+SELECT COUNT(DISTINCT w.id)
+FROM openalex.works AS w,
+     UNNEST(w.authorships) AS unnest
+WHERE array_length(list_filter(unnest.institutions, x -> x.ror = 'https://ror.org/04dkp9463')) > 0;
+
+-- OpenAIRE: publications for a single institution (organizations[].pids, no .id field)
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(
+    unnest.pids,
+    x -> x.scheme = 'ROR' AND x.value = 'https://ror.org/04dkp9463'
+)) > 0;
+
+-- OpenAIRE: multiple institutions — use list_contains() inside the lambda
+SELECT COUNT(DISTINCT pub.id)
+FROM openaire.publications AS pub,
+     UNNEST(pub.organizations) AS unnest
+WHERE array_length(list_filter(
+    unnest.pids,
+    x -> x.scheme = 'ROR' AND list_contains(['https://ror.org/aaa', 'https://ror.org/bbb'], x.value)
+)) > 0;
+```
+
+### Performance facts (DuckLake on SURF Object Store)
+
+No indexes or partition pruning for nested fields — every UNNEST query is a full Parquet scan over HTTPS:
+
+| Table | Rows | Approx. scan time |
+|---|---|---|
+| `openalex.institutions` | 120 K | < 1 s |
+| `cris.publications` | 2.4 M | seconds |
+| `openaire.publications` | 206 M | 15–30 min |
+| `openalex.works` | 364 M | 15+ min |
+| `openaire.relations` | large | no faster than publications |
+
+Prefer pre-computed fields where possible: `openalex.institutions.works_count` gives publication counts per institution in < 1 s.
+
+### Skills and MCP server location
+
+- Agent skills live in `.agents/skills/` (not `.claude/skills/`)
+- MCP server config: `.claude/settings.json` with `mcpServers`
+- The `ori-ducklake-sprouts` MCP server is installed via `uv tool install mcp-servers/ori-ducklake-mcp/`

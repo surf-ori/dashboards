@@ -1,6 +1,11 @@
 _site/
 __marimo__
 .DS_Store
+.claude
+.opencode
+_bmad/
+_bmad-output/
+.tmp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -209,3 +214,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Dashboard query cache (local Parquet files, rebuilt on refresh)
+notebooks/*/cache/

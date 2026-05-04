@@ -1,0 +1,8 @@
+{
+  "title": "ORI Data Quality Dashboard",
+  "image": "public/screenshot.png",
+  "authors": [
+    { "name": "SURF ORI Team", "github": "surf-ori" }
+  ],
+  "format": "app"
+}
