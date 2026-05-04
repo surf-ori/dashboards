@@ -139,6 +139,31 @@ def _(is_script_mode, train_button, lr_slider, run_training, X_data, y_data):
     return (results,)
 ```
 
+## No Early Returns in Cells
+
+Marimo cells must have a **single `return` at the end**. Early returns are flagged as `invalid-syntax` by `marimo check --fix` and converted to `_unparsable_cell`. Use `if/else` instead:
+
+```python
+# BAD — early return, will break marimo check
+@app.cell
+def _(cache, pl):
+    if cache.exists():
+        return (pl.read_parquet(cache),)   # invalid-syntax
+    result = expensive_query()
+    return (result,)
+
+# GOOD — single return at the end
+@app.cell
+def _(cache, pl):
+    if cache.exists():
+        result = pl.read_parquet(cache)
+    else:
+        result = expensive_query()
+    return (result,)
+```
+
+Always run `marimo check --fix` after writing cells to catch this.
+
 ## State and Reactivity
 
 Variables between cells define the reactivity of the notebook for 99% of the use-cases out there. No special state management needed. Don't mutate objects across cells (e.g., `my_list.append()`); create new objects instead. Avoid `mo.state()` unless you need bidirectional UI sync or accumulated callback state. See [STATE.md](references/STATE.md) for details.
