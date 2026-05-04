@@ -39,9 +39,37 @@ def imports():
     import marimo as mo
     import polars as pl
     import altair as alt
-    from datetime import date
 
     return alt, mo, pl
+
+
+@app.cell(hide_code=True)
+def cache_setup(mo, sys):
+    from datetime import datetime
+    import hashlib
+
+    is_wasm = 'pyodide' in sys.modules
+    CACHE_DIR = mo.notebook_location() / 'cache'
+
+    _sentinel = CACHE_DIR / '.last_refreshed'
+    if not is_wasm and _sentinel.exists():
+        _ts = datetime.fromtimestamp(_sentinel.stat().st_mtime)
+        cache_last_refreshed = _ts.strftime('%Y-%m-%d %H:%M')
+    else:
+        cache_last_refreshed = None
+    return CACHE_DIR, cache_last_refreshed, hashlib, is_wasm
+
+
+@app.cell(hide_code=True)
+def refresh_ui(mo):
+    refresh_btn = mo.ui.button(
+        value=0,
+        on_click=lambda v: v + 1,
+        label=f"{mo.icon('lucide:refresh-cw')} Refresh all data",
+        kind='warn',
+        full_width=True,
+    )
+    return (refresh_btn,)
 
 
 @app.cell(hide_code=True)
@@ -68,168 +96,253 @@ def attach_catalog(mo, url):
 
 
 @app.cell(hide_code=True)
-async def load_nl_baseline(io, openpyxl, pl, sys):
+async def load_nl_baseline(
+    CACHE_DIR,
+    io,
+    is_wasm,
+    openpyxl,
+    pl,
+    refresh_btn,
+    sys,
+):
     # fetch the Dutch research organisations baseline list from Zenodo (DOI: 10.5281/zenodo.18957154)
     # and annotate each org with its Barcelona Declaration signatory status
-
-    _ZENODO_URL = 'https://zenodo.org/api/records/18957154/files/nl-orgs-baseline.xlsx/content'
-
-    # ROR IDs of NL Barcelona Declaration signatories (source: barcelona-declaration.org/signatories_by_country/)
-    _BARCELONA_RORS = {
-        'https://ror.org/02e2c7k09',  # Delft University of Technology
-        'https://ror.org/04jsz6e67',  # Dutch Research Council (NWO)
-        'https://ror.org/02w4jbg70',  # KB, National Library of the Netherlands
-        'https://ror.org/027bh9e22',  # Leiden University
-        'https://ror.org/00rbjv475',  # Netherlands eScience Center
-        'https://ror.org/043c0p156',  # Royal Netherlands Academy of Arts and Sciences (KNAW)
-        'https://ror.org/009vhk114',  # SURF
-        'https://ror.org/04dkp9463',  # University of Amsterdam
-        'https://ror.org/012p63287',  # University of Groningen
-        'https://ror.org/04pp8hn57',  # Utrecht University
-        'https://ror.org/008xxew50',  # Vrije Universiteit Amsterdam
-    }
-
-    if 'pyodide' in sys.modules:
-        import pyodide.http
-        _resp = await pyodide.http.pyfetch(_ZENODO_URL)
-        _raw = await _resp.bytes()
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'nl_baseline.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        nl_baseline_df = pl.read_parquet(_cache)
     else:
-        import urllib.request
-        with urllib.request.urlopen(_ZENODO_URL) as _r:
-            _raw = _r.read()
+        _ZENODO_URL = 'https://zenodo.org/api/records/18957154/files/nl-orgs-baseline.xlsx/content'
 
-    _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
-    _ws = _wb['nl-orgs']
-    _all_rows = list(_ws.iter_rows(values_only=True))
-    _data_rows = [r for r in _all_rows[1:] if r[0] and r[3]]  # skip header + empty rows
+        # ROR IDs of NL Barcelona Declaration signatories (source: barcelona-declaration.org/signatories_by_country/)
+        _BARCELONA_RORS = {
+            'https://ror.org/02e2c7k09',  # Delft University of Technology
+            'https://ror.org/04jsz6e67',  # Dutch Research Council (NWO)
+            'https://ror.org/02w4jbg70',  # KB, National Library of the Netherlands
+            'https://ror.org/027bh9e22',  # Leiden University
+            'https://ror.org/00rbjv475',  # Netherlands eScience Center
+            'https://ror.org/043c0p156',  # Royal Netherlands Academy of Arts and Sciences (KNAW)
+            'https://ror.org/009vhk114',  # SURF
+            'https://ror.org/04dkp9463',  # University of Amsterdam
+            'https://ror.org/012p63287',  # University of Groningen
+            'https://ror.org/04pp8hn57',  # Utrecht University
+            'https://ror.org/008xxew50',  # Vrije Universiteit Amsterdam
+        }
 
-    nl_baseline_df = pl.DataFrame({
-        'full_name': [r[0] for r in _data_rows],
-        'acronym':   [r[1] or '' for r in _data_rows],
-        'grouping':  [r[3] for r in _data_rows],
-        'ror':       [r[5] if r[5] and r[5] != 'nvt' else None for r in _data_rows],
-    }).with_columns(
-        pl.col('ror').is_in(_BARCELONA_RORS).fill_null(False).alias('barcelona_signatory'),
-    )
+        if 'pyodide' in sys.modules:
+            import pyodide.http
+            _resp = await pyodide.http.pyfetch(_ZENODO_URL)
+            _raw = await _resp.bytes()
+        else:
+            import urllib.request
+            with urllib.request.urlopen(_ZENODO_URL) as _r:
+                _raw = _r.read()
+
+        _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
+        _ws = _wb['nl-orgs']
+        _all_rows = list(_ws.iter_rows(values_only=True))
+        _data_rows = [r for r in _all_rows[1:] if r[0] and r[3]]  # skip header + empty rows
+
+        nl_baseline_df = pl.DataFrame({
+            'full_name': [r[0] for r in _data_rows],
+            'acronym':   [r[1] or '' for r in _data_rows],
+            'grouping':  [r[3] for r in _data_rows],
+            'ror':       [r[5] if r[5] and r[5] != 'nvt' else None for r in _data_rows],
+        }).with_columns(
+            pl.col('ror').is_in(_BARCELONA_RORS).fill_null(False).alias('barcelona_signatory'),
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            nl_baseline_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (nl_baseline_df,)
 
 
 @app.cell(hide_code=True)
-def load_nl_openalex_orgs(mo, nl_baseline_df):
+def load_nl_openalex_orgs(
+    CACHE_DIR,
+    is_wasm,
+    mo,
+    nl_baseline_df,
+    pl,
+    refresh_btn,
+):
     # query OpenAlex institutions for orgs in the NL baseline, anchored by ROR
-    _rors = nl_baseline_df['ror'].drop_nulls().to_list()
-    _rors_clause = ', '.join(f"'{r}'" for r in _rors) if _rors else "''"
-    nl_openalex_orgs_df = mo.sql(
-        f"""
-        SELECT
-            id AS openalex_orgs_id,
-            display_name,
-            ror,
-            type,
-            works_count,
-            cited_by_count,
-            ids.ror      IS NOT NULL AS has_ror,
-            ids.grid     IS NOT NULL AS has_grid,
-            ids.wikidata IS NOT NULL AS has_wikidata,
-            ids.wikipedia IS NOT NULL AS has_wikipedia,
-            homepage_url IS NOT NULL AS has_homepage,
-            ids.grid      AS grid_id,
-            ids.wikidata  AS wikidata_id,
-            ids.wikipedia AS wikipedia_url,
-            homepage_url
-        FROM openalex.institutions
-        WHERE ror IN ({_rors_clause})
-        ORDER BY works_count DESC
-        """,
-        output=False
-    )
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'nl_openalex_orgs.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        nl_openalex_orgs_df = pl.read_parquet(_cache)
+    else:
+        _rors = nl_baseline_df['ror'].drop_nulls().to_list()
+        _rors_clause = ', '.join(f"'{r}'" for r in _rors) if _rors else "''"
+        nl_openalex_orgs_df = mo.sql(
+            f"""
+            SELECT
+                id AS openalex_orgs_id,
+                display_name,
+                ror,
+                type,
+                works_count,
+                cited_by_count,
+                ids.ror      IS NOT NULL AS has_ror,
+                ids.grid     IS NOT NULL AS has_grid,
+                ids.wikidata IS NOT NULL AS has_wikidata,
+                ids.wikipedia IS NOT NULL AS has_wikipedia,
+                homepage_url IS NOT NULL AS has_homepage,
+                ids.grid      AS grid_id,
+                ids.wikidata  AS wikidata_id,
+                ids.wikipedia AS wikipedia_url,
+                homepage_url
+            FROM openalex.institutions
+            WHERE ror IN ({_rors_clause})
+            ORDER BY works_count DESC
+            """,
+            output=False
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            nl_openalex_orgs_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (nl_openalex_orgs_df,)
 
 
 @app.cell(hide_code=True)
-def load_nl_openaire_orgs(mo, nl_baseline_df, pl):
+def load_nl_openaire_orgs(
+    CACHE_DIR,
+    is_wasm,
+    mo,
+    nl_baseline_df,
+    pl,
+    refresh_btn,
+):
     # query OpenAIRE organizations for orgs in the NL baseline, anchored by ROR
-    _rors = nl_baseline_df['ror'].drop_nulls().to_list()
-    _rors_list = '[' + ', '.join(f"'{r}'" for r in _rors) + ']' if _rors else "['']"
-    nl_openaire_orgs_df = mo.sql(f"""
-    SELECT
-        o.legalName,
-        o.legalShortName,
-        o.websiteUrl,
-        o.id AS openaire_orgs_id,
-        o.pids
-    FROM openaire.organizations AS o,
-         UNNEST(o.pids) AS unnest
-    WHERE unnest.scheme = 'ROR'
-      AND list_contains({_rors_list}, unnest.value)
-    """, output=False)
-    # Extract PIDs from pids list
-    nl_openaire_orgs_df = nl_openaire_orgs_df.with_columns(
-        pl.col('pids').list.eval(
-            pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'ROR')
-            .then(pl.element().struct.field('value'))
-        ).list.drop_nulls().list.first().alias('ror'),
-        pl.col('pids').list.eval(
-            pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'ISNI')
-            .then(pl.element().struct.field('value'))
-        ).list.drop_nulls().list.first().alias('isni'),
-        pl.col('pids').list.eval(
-            pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'GRID')
-            .then(pl.element().struct.field('value'))
-        ).list.drop_nulls().list.first().alias('grid'),
-        pl.col('pids').list.eval(
-            pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'WIKIDATA')
-            .then(pl.element().struct.field('value'))
-        ).list.drop_nulls().list.first().alias('wikidata'),
-    )
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'nl_openaire_orgs.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        nl_openaire_orgs_df = pl.read_parquet(_cache)
+    else:
+        _rors = nl_baseline_df['ror'].drop_nulls().to_list()
+        _rors_list = '[' + ', '.join(f"'{r}'" for r in _rors) + ']' if _rors else "['']"
+        nl_openaire_orgs_df = mo.sql(f"""
+        SELECT
+            o.legalName,
+            o.legalShortName,
+            o.websiteUrl,
+            o.id AS openaire_orgs_id,
+            o.pids
+        FROM openaire.organizations AS o,
+             UNNEST(o.pids) AS unnest
+        WHERE unnest.scheme = 'ROR'
+          AND list_contains({_rors_list}, unnest.value)
+        """, output=False)
+        # Extract PIDs from pids list
+        nl_openaire_orgs_df = nl_openaire_orgs_df.with_columns(
+            pl.col('pids').list.eval(
+                pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'ROR')
+                .then(pl.element().struct.field('value'))
+            ).list.drop_nulls().list.first().alias('ror'),
+            pl.col('pids').list.eval(
+                pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'ISNI')
+                .then(pl.element().struct.field('value'))
+            ).list.drop_nulls().list.first().alias('isni'),
+            pl.col('pids').list.eval(
+                pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'GRID')
+                .then(pl.element().struct.field('value'))
+            ).list.drop_nulls().list.first().alias('grid'),
+            pl.col('pids').list.eval(
+                pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'WIKIDATA')
+                .then(pl.element().struct.field('value'))
+            ).list.drop_nulls().list.first().alias('wikidata'),
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            nl_openaire_orgs_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (nl_openaire_orgs_df,)
 
 
 @app.cell(hide_code=True)
-async def load_nl_endpoint_table(io, openpyxl, pl, sys):
+async def load_nl_endpoint_table(
+    CACHE_DIR,
+    io,
+    is_wasm,
+    openpyxl,
+    pl,
+    refresh_btn,
+    sys,
+):
     # fetch the NL organisations → OpenAIRE datasource endpoint table from Zenodo
     # (DOI: 10.5281/zenodo.18959652); maps openaire_org_id to OpenAIRE_DataSource_ID + OAI endpoints
-    _ZENODO_URL = 'https://zenodo.org/api/records/19470205/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx/content'
-
-    if 'pyodide' in sys.modules:
-        import pyodide.http as _pyodide_http
-        _resp = await _pyodide_http.pyfetch(_ZENODO_URL)
-        _raw = await _resp.bytes()
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'nl_endpoint.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        nl_endpoint_df = pl.read_parquet(_cache)
     else:
-        import urllib.request as _urllib_request
-        with _urllib_request.urlopen(_ZENODO_URL) as _r:
-            _raw = _r.read()
+        _ZENODO_URL = 'https://zenodo.org/api/records/19470205/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx/content'
 
-    _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
-    _ws = _wb.active
-    _all_rows = list(_ws.iter_rows(values_only=True))
-    _headers = [str(h) if h is not None else f'col_{i}' for i, h in enumerate(_all_rows[0])]
-    nl_endpoint_df = pl.DataFrame(
-        {_headers[i]: [r[i] for r in _all_rows[1:]] for i in range(len(_headers))}
-    )
+        if 'pyodide' in sys.modules:
+            import pyodide.http as _pyodide_http
+            _resp = await _pyodide_http.pyfetch(_ZENODO_URL)
+            _raw = await _resp.bytes()
+        else:
+            import urllib.request as _urllib_request
+            with _urllib_request.urlopen(_ZENODO_URL) as _r:
+                _raw = _r.read()
+
+        _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
+        _ws = _wb.active
+        _all_rows = list(_ws.iter_rows(values_only=True))
+        _headers = [str(h) if h is not None else f'col_{i}' for i, h in enumerate(_all_rows[0])]
+        nl_endpoint_df = pl.DataFrame(
+            {_headers[i]: [r[i] for r in _all_rows[1:]] for i in range(len(_headers))}
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            nl_endpoint_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (nl_endpoint_df,)
 
 
 @app.cell(hide_code=True)
-def load_nl_openaire_datasources(mo, nl_endpoint_df):
+def load_nl_openaire_datasources(
+    CACHE_DIR,
+    is_wasm,
+    mo,
+    nl_endpoint_df,
+    pl,
+    refresh_btn,
+):
     # query OpenAIRE datasources table for datasource IDs from the endpoint table
-    _ds_ids = nl_endpoint_df['OpenAIRE_DataSource_ID'].drop_nulls().unique().to_list()
-    _ids_clause = ', '.join(f"'{i}'" for i in _ds_ids) if _ds_ids else "''"
-    nl_datasources_df = mo.sql(f"""
-    SELECT *
-    FROM openaire.datasources
-    WHERE id IN ({_ids_clause})
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'nl_openaire_datasources.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        nl_datasources_df = pl.read_parquet(_cache)
+    else:
+        _ds_ids = nl_endpoint_df['OpenAIRE_DataSource_ID'].drop_nulls().unique().to_list()
+        _ids_clause = ', '.join(f"'{i}'" for i in _ds_ids) if _ds_ids else "''"
+        nl_datasources_df = mo.sql(f"""
+        SELECT *
+        FROM openaire.datasources
+        WHERE id IN ({_ids_clause})
+        """, output=False)
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            nl_datasources_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (nl_datasources_df,)
 
 
 @app.cell(hide_code=True)
 def load_openalex_publications_counts(
+    CACHE_DIR,
+    hashlib,
+    is_wasm,
     mo,
     nl_baseline_df,
     nl_openalex_orgs_df,
     org_select,
     pl,
+    refresh_btn,
 ):
     # Count OpenAlex works for selected organisations by querying openalex.works directly.
     # Uses openalex_orgs_id (institution ID) to filter authorships[].institutions[].id.
@@ -244,26 +357,40 @@ def load_openalex_publications_counts(
         .filter(pl.col('ror').is_in(_sel_rors))
         ['openalex_orgs_id'].drop_nulls().to_list()
     )
-    _openalex_ids_list = '[' + ', '.join(f"'{i}'" for i in _openalex_ids) + ']' if _openalex_ids else "['']"
-    openalex_works_df = mo.sql(f"""
-    SELECT COUNT(DISTINCT w.id) AS openalex_works_count
-    FROM openalex.works AS w,
-         UNNEST(w.authorships) AS unnest
-    WHERE array_length(list_filter(
-        unnest.institutions,
-        x -> list_contains({_openalex_ids_list}, x.id)
-    )) > 0
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _key = hashlib.sha1(','.join(sorted(_sel_rors)).encode()).hexdigest()[:8]
+    _cache = CACHE_DIR / f'openalex_works_{_key}.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        openalex_works_df = pl.read_parquet(_cache)
+    else:
+        _openalex_ids_list = '[' + ', '.join(f"'{i}'" for i in _openalex_ids) + ']' if _openalex_ids else "['']"
+        openalex_works_df = mo.sql(f"""
+        SELECT COUNT(DISTINCT w.id) AS openalex_works_count
+        FROM openalex.works AS w,
+             UNNEST(w.authorships) AS unnest
+        WHERE array_length(list_filter(
+            unnest.institutions,
+            x -> list_contains({_openalex_ids_list}, x.id)
+        )) > 0
+        """, output=False)
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            openalex_works_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (openalex_works_df,)
 
 
 @app.cell(hide_code=True)
 def load_openaire_pubs_counts(
+    CACHE_DIR,
+    hashlib,
+    is_wasm,
     mo,
     nl_baseline_df,
     nl_openaire_orgs_df,
     org_select,
     pl,
+    refresh_btn,
 ):
     # Count OpenAIRE publications for selected organisations using openaire_orgs_id.
     # Filters publications.organizations[].id — full scan of 206 M rows.
@@ -277,206 +404,262 @@ def load_openaire_pubs_counts(
         .filter(pl.col('ror').is_in(_sel_rors))
         ['openaire_orgs_id'].drop_nulls().to_list()
     )
-    _openaire_ids_list = '[' + ', '.join(f"'{i}'" for i in _openaire_ids) + ']' if _openaire_ids else "['']"
-    openaire_pubs_df = mo.sql(f"""
-    SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
-    FROM openaire.publications AS pub
-    WHERE array_length(list_filter(
-        pub.organizations,
-        x -> list_contains({_openaire_ids_list}, x.id)
-    )) > 0
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _key = hashlib.sha1(','.join(sorted(_sel_rors)).encode()).hexdigest()[:8]
+    _cache = CACHE_DIR / f'openaire_pubs_{_key}.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        openaire_pubs_df = pl.read_parquet(_cache)
+    else:
+        _openaire_ids_list = '[' + ', '.join(f"'{i}'" for i in _openaire_ids) + ']' if _openaire_ids else "['']"
+        openaire_pubs_df = mo.sql(f"""
+        SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
+        FROM openaire.publications AS pub
+        WHERE array_length(list_filter(
+            pub.organizations,
+            x -> list_contains({_openaire_ids_list}, x.id)
+        )) > 0
+        """, output=False)
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            openaire_pubs_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (openaire_pubs_df,)
 
 
 @app.cell(hide_code=True)
-def load_cris_pubs_counts(mo, nl_baseline_df, org_select, pl):
+def load_cris_pubs_counts(
+    CACHE_DIR,
+    hashlib,
+    is_wasm,
+    mo,
+    nl_baseline_df,
+    org_select,
+    pl,
+    refresh_btn,
+):
     # Count CRIS publications for selected organisations — fast scan of 2.4 M rows.
     _sel_rors = (
         nl_baseline_df
         .filter(pl.col('full_name').is_in(org_select.value))
         ['ror'].drop_nulls().to_list()
     )
-    _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
-    cris_pubs_df = mo.sql(f"""
-    SELECT COUNT(*) AS cris_pubs_count
-    FROM cris.publications
-    WHERE repository_info.ror IS NOT NULL
-      AND repository_info.ror IN ({_rors_clause})
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _key = hashlib.sha1(','.join(sorted(_sel_rors)).encode()).hexdigest()[:8]
+    _cache = CACHE_DIR / f'cris_pubs_{_key}.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        cris_pubs_df = pl.read_parquet(_cache)
+    else:
+        _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
+        cris_pubs_df = mo.sql(f"""
+        SELECT COUNT(*) AS cris_pubs_count
+        FROM cris.publications
+        WHERE repository_info.ror IS NOT NULL
+          AND repository_info.ror IN ({_rors_clause})
+        """, output=False)
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cris_pubs_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (cris_pubs_df,)
 
 
 @app.cell(hide_code=True)
-def load_openalex_completeness(mo, pl):
+def load_openalex_completeness(CACHE_DIR, is_wasm, mo, pl, refresh_btn):
     # aggregate field-level completeness from first OpenAlex works shard (data_0) via direct parquet read
     # the full works table spans 732 files; querying data_0 only keeps this cell fast
-    _WORKS_URL = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openalex/works/data_0.parquet'
-    _raw = mo.sql(f"""
-    SELECT
-        COUNT(*)::BIGINT AS total,
-        COUNT(title)::BIGINT AS has_title,
-        COUNT(abstract_inverted_index)::BIGINT AS has_abstract,
-        COUNT(publication_date)::BIGINT AS has_date,
-        COUNT_IF(doi IS NOT NULL AND doi LIKE 'https://doi.org/10.%')::BIGINT AS has_doi,
-        COUNT_IF(array_length(list_filter(
-            authorships,
-            x -> array_length(list_filter(
-                x.institutions, y -> y.ror LIKE 'https://ror.org/%'
-            )) > 0
-        )) > 0)::BIGINT AS has_ror,
-        COUNT_IF(array_length(list_filter(
-            authorships,
-            x -> x.author.orcid LIKE 'https://orcid.org/%'
-        )) > 0)::BIGINT AS has_orcid,
-        COUNT_IF(array_length(list_filter(
-            authorships,
-            x -> x.is_corresponding
-              AND array_length(list_filter(x.institutions, y -> y.country_code = 'NL')) > 0
-        )) > 0)::BIGINT AS has_nl_corresponding,
-        COUNT_IF(open_access.oa_status IS NOT NULL)::BIGINT AS has_oa_status,
-        COUNT_IF(
-            primary_location.license IS NOT NULL
-            AND lower(primary_location.license) LIKE 'cc-%'
-        )::BIGINT AS has_cc_license,
-        COUNT_IF(array_length(funders) > 0)::BIGINT AS has_funder,
-        COUNT(primary_location.source.issn_l)::BIGINT AS has_issn
-    FROM read_parquet('{_WORKS_URL}')
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'openalex_completeness.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        openalex_compl_df = pl.read_parquet(_cache)
+    else:
+        _WORKS_URL = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openalex/works/data_0.parquet'
+        _raw = mo.sql(f"""
+        SELECT
+            COUNT(*)::BIGINT AS total,
+            COUNT(title)::BIGINT AS has_title,
+            COUNT(abstract_inverted_index)::BIGINT AS has_abstract,
+            COUNT(publication_date)::BIGINT AS has_date,
+            COUNT_IF(doi IS NOT NULL AND doi LIKE 'https://doi.org/10.%')::BIGINT AS has_doi,
+            COUNT_IF(array_length(list_filter(
+                authorships,
+                x -> array_length(list_filter(
+                    x.institutions, y -> y.ror LIKE 'https://ror.org/%'
+                )) > 0
+            )) > 0)::BIGINT AS has_ror,
+            COUNT_IF(array_length(list_filter(
+                authorships,
+                x -> x.author.orcid LIKE 'https://orcid.org/%'
+            )) > 0)::BIGINT AS has_orcid,
+            COUNT_IF(array_length(list_filter(
+                authorships,
+                x -> x.is_corresponding
+                  AND array_length(list_filter(x.institutions, y -> y.country_code = 'NL')) > 0
+            )) > 0)::BIGINT AS has_nl_corresponding,
+            COUNT_IF(open_access.oa_status IS NOT NULL)::BIGINT AS has_oa_status,
+            COUNT_IF(
+                primary_location.license IS NOT NULL
+                AND lower(primary_location.license) LIKE 'cc-%'
+            )::BIGINT AS has_cc_license,
+            COUNT_IF(array_length(funders) > 0)::BIGINT AS has_funder,
+            COUNT(primary_location.source.issn_l)::BIGINT AS has_issn
+        FROM read_parquet('{_WORKS_URL}')
+        """, output=False)
 
-    _total = _raw['total'][0]
-    openalex_compl_df = pl.DataFrame({
-        'field': [
-            'Title', 'Abstract', 'Publication Date', 'DOI',
-            'ROR (affiliation)', 'ORCID (author)',
-            'Dutch corresp. author', 'Open Access status',
-            'Creative Commons licence', 'Funder / Grant', 'ISSN',
-        ],
-        'label': [
-            'Title', 'Abstract', 'Date', 'DOI',
-            'ROR', 'ORCID',
-            'NL corresp.', 'OA status',
-            'CC licence', 'Funder', 'ISSN',
-        ],
-        'has_value': [
-            _raw['has_title'][0], _raw['has_abstract'][0], _raw['has_date'][0],
-            _raw['has_doi'][0], _raw['has_ror'][0], _raw['has_orcid'][0],
-            _raw['has_nl_corresponding'][0], _raw['has_oa_status'][0],
-            _raw['has_cc_license'][0], _raw['has_funder'][0], _raw['has_issn'][0],
-        ],
-        'total': [_total] * 11,
-    }).with_columns(
-        (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
-        (pl.col('total') - pl.col('has_value')).alias('missing'),
-    )
+        _total = _raw['total'][0]
+        openalex_compl_df = pl.DataFrame({
+            'field': [
+                'Title', 'Abstract', 'Publication Date', 'DOI',
+                'ROR (affiliation)', 'ORCID (author)',
+                'Dutch corresp. author', 'Open Access status',
+                'Creative Commons licence', 'Funder / Grant', 'ISSN',
+            ],
+            'label': [
+                'Title', 'Abstract', 'Date', 'DOI',
+                'ROR', 'ORCID',
+                'NL corresp.', 'OA status',
+                'CC licence', 'Funder', 'ISSN',
+            ],
+            'has_value': [
+                _raw['has_title'][0], _raw['has_abstract'][0], _raw['has_date'][0],
+                _raw['has_doi'][0], _raw['has_ror'][0], _raw['has_orcid'][0],
+                _raw['has_nl_corresponding'][0], _raw['has_oa_status'][0],
+                _raw['has_cc_license'][0], _raw['has_funder'][0], _raw['has_issn'][0],
+            ],
+            'total': [_total] * 11,
+        }).with_columns(
+            (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
+            (pl.col('total') - pl.col('has_value')).alias('missing'),
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            openalex_compl_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (openalex_compl_df,)
 
 
 @app.cell(hide_code=True)
-def load_openaire_completeness(mo, pl):
+def load_openaire_completeness(CACHE_DIR, is_wasm, mo, pl, refresh_btn):
     # aggregate field-level completeness from first OpenAIRE publications shard (data_0) via direct parquet read
-    _PUBS_URL = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openaire/publications/data_0.parquet'
-    _raw = mo.sql(f"""
-    SELECT
-        COUNT(*)::BIGINT AS total,
-        COUNT(mainTitle)::BIGINT AS has_title,
-        COUNT(publicationDate)::BIGINT AS has_date,
-        COUNT_IF(array_length(list_filter(
-            pids, x -> x.scheme = 'doi' AND x.value LIKE '10.%'
-        )) > 0)::BIGINT AS has_doi,
-        COUNT_IF(array_length(list_filter(
-            organizations,
-            x -> array_length(list_filter(
-                x.pids, y -> y.scheme = 'ROR' AND y.value LIKE 'https://ror.org/%'
-            )) > 0
-        )) > 0)::BIGINT AS has_ror,
-        COUNT_IF(array_length(list_filter(
-            authors,
-            x -> x.pid.id.scheme = 'orcid' AND x.pid.id.value IS NOT NULL
-        )) > 0)::BIGINT AS has_orcid,
-        COUNT_IF(bestAccessRight.code IS NOT NULL)::BIGINT AS has_oa_status,
-        COUNT_IF(array_length(list_filter(
-            instances,
-            x -> x.license IS NOT NULL AND (
-                lower(x.license) LIKE '%creativecommons%'
-                OR lower(x.license) LIKE 'cc-%'
-                OR lower(x.license) LIKE 'cc by%'
-            )
-        )) > 0)::BIGINT AS has_cc_license,
-        COUNT_IF(array_length(projects) > 0)::BIGINT AS has_funder,
-        COUNT_IF(
-            container.issnPrinted IS NOT NULL OR container.issnOnline IS NOT NULL
-        )::BIGINT AS has_issn
-    FROM read_parquet('{_PUBS_URL}')
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'openaire_completeness.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        openaire_compl_df = pl.read_parquet(_cache)
+    else:
+        _PUBS_URL = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openaire/publications/data_0.parquet'
+        _raw = mo.sql(f"""
+        SELECT
+            COUNT(*)::BIGINT AS total,
+            COUNT(mainTitle)::BIGINT AS has_title,
+            COUNT(publicationDate)::BIGINT AS has_date,
+            COUNT_IF(array_length(list_filter(
+                pids, x -> x.scheme = 'doi' AND x.value LIKE '10.%'
+            )) > 0)::BIGINT AS has_doi,
+            COUNT_IF(array_length(list_filter(
+                organizations,
+                x -> array_length(list_filter(
+                    x.pids, y -> y.scheme = 'ROR' AND y.value LIKE 'https://ror.org/%'
+                )) > 0
+            )) > 0)::BIGINT AS has_ror,
+            COUNT_IF(array_length(list_filter(
+                authors,
+                x -> x.pid.id.scheme = 'orcid' AND x.pid.id.value IS NOT NULL
+            )) > 0)::BIGINT AS has_orcid,
+            COUNT_IF(bestAccessRight.code IS NOT NULL)::BIGINT AS has_oa_status,
+            COUNT_IF(array_length(list_filter(
+                instances,
+                x -> x.license IS NOT NULL AND (
+                    lower(x.license) LIKE '%creativecommons%'
+                    OR lower(x.license) LIKE 'cc-%'
+                    OR lower(x.license) LIKE 'cc by%'
+                )
+            )) > 0)::BIGINT AS has_cc_license,
+            COUNT_IF(array_length(projects) > 0)::BIGINT AS has_funder,
+            COUNT_IF(
+                container.issnPrinted IS NOT NULL OR container.issnOnline IS NOT NULL
+            )::BIGINT AS has_issn
+        FROM read_parquet('{_PUBS_URL}')
+        """, output=False)
 
-    _total = _raw['total'][0]
-    openaire_compl_df = pl.DataFrame({
-        'field': [
-            'Title', 'Publication Date', 'DOI',
-            'ROR (organisation)', 'ORCID (author)',
-            'Open Access status', 'Creative Commons licence',
-            'Funder / Grant', 'ISSN',
-        ],
-        'label': [
-            'Title', 'Date', 'DOI',
-            'ROR', 'ORCID',
-            'OA status', 'CC licence',
-            'Funder', 'ISSN',
-        ],
-        'has_value': [
-            _raw['has_title'][0], _raw['has_date'][0], _raw['has_doi'][0],
-            _raw['has_ror'][0], _raw['has_orcid'][0],
-            _raw['has_oa_status'][0], _raw['has_cc_license'][0],
-            _raw['has_funder'][0], _raw['has_issn'][0],
-        ],
-        'total': [_total] * 9,
-    }).with_columns(
-        (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
-        (pl.col('total') - pl.col('has_value')).alias('missing'),
-    )
+        _total = _raw['total'][0]
+        openaire_compl_df = pl.DataFrame({
+            'field': [
+                'Title', 'Publication Date', 'DOI',
+                'ROR (organisation)', 'ORCID (author)',
+                'Open Access status', 'Creative Commons licence',
+                'Funder / Grant', 'ISSN',
+            ],
+            'label': [
+                'Title', 'Date', 'DOI',
+                'ROR', 'ORCID',
+                'OA status', 'CC licence',
+                'Funder', 'ISSN',
+            ],
+            'has_value': [
+                _raw['has_title'][0], _raw['has_date'][0], _raw['has_doi'][0],
+                _raw['has_ror'][0], _raw['has_orcid'][0],
+                _raw['has_oa_status'][0], _raw['has_cc_license'][0],
+                _raw['has_funder'][0], _raw['has_issn'][0],
+            ],
+            'total': [_raw['total'][0]] * 9,
+        }).with_columns(
+            (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
+            (pl.col('total') - pl.col('has_value')).alias('missing'),
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            openaire_compl_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (openaire_compl_df,)
 
 
 @app.cell(hide_code=True)
-def load_cris_completeness(mo, pl):
+def load_cris_completeness(CACHE_DIR, is_wasm, mo, pl, refresh_btn):
     # aggregate field-level completeness from full CRIS publications table (2.4 M rows — fast scan)
-    _raw = mo.sql("""
-    SELECT
-        COUNT(*)::BIGINT AS total,
-        COUNT_IF("cerif:Title" IS NOT NULL AND array_length("cerif:Title") > 0)::BIGINT AS has_title,
-        COUNT_IF("cerif:Abstract" IS NOT NULL AND array_length("cerif:Abstract") > 0)::BIGINT AS has_abstract,
-        COUNT_IF("cerif:PublicationDate" IS NOT NULL)::BIGINT AS has_date,
-        COUNT_IF("cerif:DOI" IS NOT NULL AND "cerif:DOI" LIKE '10.%')::BIGINT AS has_doi,
-        COUNT_IF(
-            repository_info.ror IS NOT NULL
-            AND repository_info.ror LIKE 'https://ror.org/%'
-        )::BIGINT AS has_ror,
-        COUNT_IF("ar:Access" IS NOT NULL)::BIGINT AS has_oa_status,
-        COUNT_IF("cerif:ISSN" IS NOT NULL AND array_length("cerif:ISSN") > 0)::BIGINT AS has_issn
-    FROM cris.publications
-    """, output=False)
+    _force = refresh_btn.value > 0
+    _cache = CACHE_DIR / 'cris_completeness.parquet'
+    if not is_wasm and not _force and _cache.exists():
+        cris_compl_df = pl.read_parquet(_cache)
+    else:
+        _raw = mo.sql("""
+        SELECT
+            COUNT(*)::BIGINT AS total,
+            COUNT_IF("cerif:Title" IS NOT NULL AND array_length("cerif:Title") > 0)::BIGINT AS has_title,
+            COUNT_IF("cerif:Abstract" IS NOT NULL AND array_length("cerif:Abstract") > 0)::BIGINT AS has_abstract,
+            COUNT_IF("cerif:PublicationDate" IS NOT NULL)::BIGINT AS has_date,
+            COUNT_IF("cerif:DOI" IS NOT NULL AND "cerif:DOI" LIKE '10.%')::BIGINT AS has_doi,
+            COUNT_IF(
+                repository_info.ror IS NOT NULL
+                AND repository_info.ror LIKE 'https://ror.org/%'
+            )::BIGINT AS has_ror,
+            COUNT_IF("ar:Access" IS NOT NULL)::BIGINT AS has_oa_status,
+            COUNT_IF("cerif:ISSN" IS NOT NULL AND array_length("cerif:ISSN") > 0)::BIGINT AS has_issn
+        FROM cris.publications
+        """, output=False)
 
-    _total = _raw['total'][0]
-    cris_compl_df = pl.DataFrame({
-        'field': [
-            'Title', 'Abstract', 'Publication Date', 'DOI',
-            'ROR (repository)', 'Open Access status', 'ISSN',
-        ],
-        'label': [
-            'Title', 'Abstract', 'Date', 'DOI',
-            'ROR', 'OA status', 'ISSN',
-        ],
-        'has_value': [
-            _raw['has_title'][0], _raw['has_abstract'][0], _raw['has_date'][0],
-            _raw['has_doi'][0], _raw['has_ror'][0],
-            _raw['has_oa_status'][0], _raw['has_issn'][0],
-        ],
-        'total': [_total] * 7,
-    }).with_columns(
-        (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
-        (pl.col('total') - pl.col('has_value')).alias('missing'),
-    )
+        _total = _raw['total'][0]
+        cris_compl_df = pl.DataFrame({
+            'field': [
+                'Title', 'Abstract', 'Publication Date', 'DOI',
+                'ROR (repository)', 'Open Access status', 'ISSN',
+            ],
+            'label': [
+                'Title', 'Abstract', 'Date', 'DOI',
+                'ROR', 'OA status', 'ISSN',
+            ],
+            'has_value': [
+                _raw['has_title'][0], _raw['has_abstract'][0], _raw['has_date'][0],
+                _raw['has_doi'][0], _raw['has_ror'][0],
+                _raw['has_oa_status'][0], _raw['has_issn'][0],
+            ],
+            'total': [_total] * 7,
+        }).with_columns(
+            (pl.col('has_value') * 100.0 / pl.col('total')).round(1).alias('pct'),
+            (pl.col('total') - pl.col('has_value')).alias('missing'),
+        )
+        if not is_wasm:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cris_compl_df.write_parquet(_cache)
+            (CACHE_DIR / '.last_refreshed').touch()
     return (cris_compl_df,)
 
 
@@ -602,11 +785,13 @@ def header(mo):
 @app.cell(hide_code=True)
 def sidebar(
     barcelona_toggle,
+    cache_last_refreshed,
     entity_select,
     group_select,
     mo,
     org_select,
     pub_type_select,
+    refresh_btn,
     source_select,
 ):
     # stack filter dropdowns and mount them in the marimo sidebar
@@ -622,7 +807,27 @@ def sidebar(
         source_select,
         pub_type_select,
     ], gap=1, align='end')
-    mo.sidebar(filters, width="350px")
+
+    _last_refreshed_label = (
+        f"Last refreshed: **{cache_last_refreshed}**"
+        if cache_last_refreshed
+        else "_Not yet cached — queries ran live on first load_"
+    )
+    _refresh_section = mo.vstack([
+        mo.md("---"),
+        mo.md("### Data Cache"),
+        mo.callout(
+            mo.md(
+                "Refresh re-runs all source queries. "
+                "OpenAlex and OpenAIRE scans take **30+ minutes**."
+            ),
+            kind='warn',
+        ),
+        refresh_btn,
+        mo.md(_last_refreshed_label),
+    ], gap=1)
+
+    mo.sidebar(mo.vstack([filters, _refresh_section], gap=2), width="350px")
     return
 
 
@@ -1053,15 +1258,6 @@ def coverage(alt, mo, nl_openaire_orgs_df, nl_openalex_orgs_df, pl):
 @app.cell(hide_code=True)
 def accuracy(alt, mo, nl_openalex_orgs_df, openalex_compl_df, pl):
     # build the accuracy tab: identifier format validation checks (ROR, GRID, Wikidata)
-    # -----------------------------------------------------------------------
-    # Identifier format validation (pattern checks)
-    # -----------------------------------------------------------------------
-
-    # DOI format: should start with "10."
-    # ROR format: should match https://ror.org/[9 chars]
-    # ORCID format: 0000-0000-0000-000X
-
-    # For institutions: check ROR format validity
     _ror_df = nl_openalex_orgs_df.select([
         pl.col('display_name'),
         pl.col('ror'),
@@ -1107,7 +1303,6 @@ def accuracy(alt, mo, nl_openalex_orgs_df, openalex_compl_df, pl):
         .properties(title='Identifier format accuracy checks', height=160, width='container')
     )
 
-    # Core fields accuracy proxy: Title + DOI + Abstract average completeness (OpenAlex sample)
     _works_completeness_score = round(
         openalex_compl_df.filter(pl.col('field').is_in(['Title', 'DOI', 'Abstract']))['pct'].mean(), 1
     )
@@ -1161,9 +1356,6 @@ def accuracy(alt, mo, nl_openalex_orgs_df, openalex_compl_df, pl):
 @app.cell(hide_code=True)
 def enrichment(mo, nl_openalex_orgs_df, openalex_compl_df, pl):
     # build the enrichment tab: prioritised recommendations to fill metadata gaps
-    # -----------------------------------------------------------------------
-    # Derive enrichment opportunities from completeness data
-    # -----------------------------------------------------------------------
     _missing_pub_fields = openalex_compl_df.filter(pl.col('pct') < 80).sort('pct').to_dicts()
     _missing_inst_fields = [
         f for f, has in [
@@ -1257,8 +1449,7 @@ def enrichment(mo, nl_openalex_orgs_df, openalex_compl_df, pl):
         },
     ]
 
-    _priority_color = {'High': '#e74c3c', 'Medium': '#f39c12', 'Low': '#95a5a6'}
-    _effort_label   = {'High': '🔴 High effort', 'Medium': '🟡 Medium', 'Low': '🟢 Low effort'}
+    _effort_label = {'High': '🔴 High effort', 'Medium': '🟡 Medium', 'Low': '🟢 Low effort'}
 
     def _make_item(iv):
         return mo.vstack([
@@ -1269,8 +1460,6 @@ def enrichment(mo, nl_openalex_orgs_df, openalex_compl_df, pl):
             mo.md(iv['description']),
             mo.md(f"→ [{iv['action_label']}]({iv['action_url']})"),
         ], gap=1)
-
-    _items = [_make_item(iv) for iv in INTERVENTIONS]
 
     _enrichment_content = mo.vstack([
         mo.md('### Enrichment opportunities'),
@@ -1304,43 +1493,14 @@ def divider(mo):
     return
 
 
-app._unparsable_cell(
-    """
-    # render a small footer with attribution, selected organisation, and today's date
-    mo.md(f\"\"\"
-    <div style=\"font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;\">
+@app.cell(hide_code=True)
+def footer(mo, org_select):
+    from datetime import date
+    mo.md(f"""
+    <div style="font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;">
     <span>ORI Quality Dashboard · PID to Portal · SURF ORI team</span>
     <span>Organisation: {', '.join(org_select.value) or '(none)'} · Data: OpenAlex / OpenAIRE via SURF DuckLake · {date.today()}</span>
     </div>
-    \"\"\")
-    return
-
-
-    if __name__ == \"__main__\":
-    app.run()
-    p.run()
-    \":
-    app.run()
-    )
-    mo.accordion({iv['title']: _make_item(iv) for iv in INTERVENTIONS}),
-        mo.callout(
-            mo.md(\"**Next steps:** Implement the suggested enrichment pipelines and re-check this dashboard. \"
-                  \"Questions? Contact [ori-team@surf.nl](mailto:ori-team@surf.nl).\"),
-            kind='success',
-        ),
-    ], gap=4)
-
-    _enrichment_content
-    """,
-    name="footer"
-)
-
-
-@app.cell(hide_code=True)
-def divider(mo):
-    # render a horizontal rule to visually separate the main content from the footer
-    mo.md("""
-    ---
     """)
     return
 

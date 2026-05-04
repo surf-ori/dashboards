@@ -87,6 +87,22 @@ if condition:
 mo.md("shown") if condition else mo.md("also shown")
 ```
 
+**No early returns in cells:** Marimo cells must have a single `return` at the end. Early returns (`if condition: return ...`) are flagged as `invalid-syntax` by `marimo check`. Use `if/else` instead:
+```python
+# BAD — early return, marimo check will reject this
+if cache.exists():
+    return (pl.read_parquet(cache),)
+result = expensive_query()
+return (result,)
+
+# GOOD — single return at the end
+if cache.exists():
+    result = pl.read_parquet(cache)
+else:
+    result = expensive_query()
+return (result,)
+```
+
 **Reactivity over guards:** Do not use `if` to guard cells against missing data — Marimo handles dependency propagation. Do not wrap logic in `if is_script_mode` blocks; instead, use default/synthetic data in script mode while keeping all UI elements visible.
 
 **Variable naming:** Do not prefix imports with underscore (use `import numpy as np`, not `_np`). Reserve `_prefix` only for loop variables that would genuinely collide with another cell's output.
