@@ -79,3 +79,5 @@ Unless specifically told otherwise, assume the following:
 Dumber is better. Prefer obvious, direct code over clever abstractions—someone
 new to the project should be able to read the code top-to-bottom and grok it
 without needing to look up framework magic or trace through indirection.
+ok it
+without needing to look up framework magic or trace through indirection.

@@ -295,3 +295,13 @@ Transformative agreements (read-and-publish deals).
 ### openapc.apc_additional_costs
 
 Additional costs beyond the APC (colour charges, page charges, etc.).
+itution` | VARCHAR | |
+| `period` | BIGINT | |
+| `euro` | DOUBLE | |
+| `agreement` | VARCHAR | Agreement name/code |
+| `publisher` | VARCHAR | |
+| `journal_full_title` | VARCHAR | |
+
+### openapc.apc_additional_costs
+
+Additional costs beyond the APC (colour charges, page charges, etc.).

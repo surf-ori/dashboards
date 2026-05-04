@@ -64,3 +64,4 @@ These flags work across most export subcommands:
 - `-f`, `--force` — overwrite if output file already exists
 - `--` — pass CLI arguments to the notebook, e.g. `uvx marimo export html notebook.py -o out.html -- --arg value`
 - `-y` automatic yes to prompts on the terminal `uvx marimo -y CMD ...` 
+utomatic yes to prompts on the terminal `uvx marimo -y CMD ...` 

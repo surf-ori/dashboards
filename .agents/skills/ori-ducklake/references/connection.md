@@ -60,3 +60,4 @@ You need DuckDB >= 1.5.2. Upgrade: `pip install -U "duckdb>=1.5.2"`.
 
 **`Required module 'pytz' failed to import`**
 Run `pip install pytz` (it's in the package dependencies but may be missing in a bare env).
+ the package dependencies but may be missing in a bare env).

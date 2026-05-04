@@ -92,3 +92,5 @@ def _(mo, get_n, set_n):
 - Don't store `mo.ui` elements inside state — causes hard-to-diagnose bugs.
 - Don't use `on_change` when you can just read `.value` from another cell.
 - Write idempotent cells — same inputs should produce same outputs.
+e` from another cell.
+- Write idempotent cells — same inputs should produce same outputs.

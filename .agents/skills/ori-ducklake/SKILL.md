@@ -185,3 +185,6 @@ This combines live `DESCRIBE` output with curated human-readable descriptions.
 - [Connection details & auth patterns](references/connection.md)
 - [All schemas, tables, and columns](references/schemas.md)
 - [Query patterns and unnesting cookbook](references/patterns.md)
+ection details & auth patterns](references/connection.md)
+- [All schemas, tables, and columns](references/schemas.md)
+- [Query patterns and unnesting cookbook](references/patterns.md)

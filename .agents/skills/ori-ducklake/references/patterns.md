@@ -350,3 +350,20 @@ FROM ducklake_snapshots('lake');
 -- Query at a specific snapshot version
 SELECT COUNT(*) FROM lake.openalex.works AT (VERSION => 2);
 ```
+LECT id, title,
+       MAP_KEYS(abstract_inverted_index) AS words
+FROM lake.openalex.works
+WHERE id = 'https://openalex.org/W2741809807';
+```
+
+---
+
+## 8  Time travel
+
+```sql
+-- Available snapshots
+FROM ducklake_snapshots('lake');
+
+-- Query at a specific snapshot version
+SELECT COUNT(*) FROM lake.openalex.works AT (VERSION => 2);
+```
