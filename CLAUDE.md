@@ -240,6 +240,8 @@ COUNT_IF(array_length(list_filter(
 uv tool run ruff check notebooks/[name]/notebook.py
 uv tool run marimo check notebooks/[name]/notebook.py
 ```
+Tip: Lint and format notebooks
+                $ marimo check --fix 
 
 ## Code Style
 
