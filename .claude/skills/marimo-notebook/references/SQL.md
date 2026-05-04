@@ -63,3 +63,8 @@ catalog = RestCatalog(
 )
 ```
 
+    uri="https://example.com",
+    token="my-token",
+)
+```
+

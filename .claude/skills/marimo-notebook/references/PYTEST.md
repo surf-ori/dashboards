@@ -209,4 +209,7 @@ same scope as the test, but it cannot see fixtures defined in other cells.
 **Why?** Running the entire notebook just for fixture discovery would be
 expensive, and static analysis cannot determine which fixtures will be
 available after cell execution since cell order is determined at runtime by
+marimo's dependency graph.ust for fixture discovery would be
+expensive, and static analysis cannot determine which fixtures will be
+available after cell execution since cell order is determined at runtime by
 marimo's dependency graph.

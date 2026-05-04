@@ -90,3 +90,8 @@ class Dice:
 
         return f"You rolled {random.randint(0, 7)}"
 ```
+(self):
+        import random
+
+        return f"You rolled {random.randint(0, 7)}"
+```

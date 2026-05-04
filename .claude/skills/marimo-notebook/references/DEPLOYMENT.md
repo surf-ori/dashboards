@@ -39,3 +39,6 @@ Besides images, you can also add metadata to the notebooks by adding to the PEP 
 # description = "Tracking my portfolio over time"
 # ///
 ```
+ing my portfolio over time"
+# ///
+```
