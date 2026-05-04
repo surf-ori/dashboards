@@ -350,20 +350,80 @@ FROM ducklake_snapshots('lake');
 -- Query at a specific snapshot version
 SELECT COUNT(*) FROM lake.openalex.works AT (VERSION => 2);
 ```
-LECT id, title,
-       MAP_KEYS(abstract_inverted_index) AS words
-FROM lake.openalex.works
-WHERE id = 'https://openalex.org/W2741809807';
-```
 
 ---
 
-## 8  Time travel
+## 9  Parquet shard reads for fast aggregate queries
+
+For large tables (`openalex.works` 364 M rows, `openaire.publications` 206 M rows), querying the catalog causes a 15–30 min full scan. Read a single parquet shard directly instead:
+
+```python
+# URL pattern: .../data/{schema}/{table}/data_0.parquet
+_WORKS_URL  = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openalex/works/data_0.parquet'
+_PUBS_URL   = 'https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/openaire/publications/data_0.parquet'
+```
 
 ```sql
--- Available snapshots
-FROM ducklake_snapshots('lake');
+-- Fast completeness aggregate over the first OpenAlex shard
+SELECT
+    COUNT(*)::BIGINT                               AS total,
+    COUNT(title)::BIGINT                           AS has_title,
+    COUNT(abstract_inverted_index)::BIGINT         AS has_abstract,
+    COUNT(publication_date)::BIGINT                AS has_date,
+    COUNT_IF(doi LIKE 'https://doi.org/10.%')::BIGINT AS has_doi,
+    COUNT_IF(array_length(funders) > 0)::BIGINT    AS has_funder
+FROM read_parquet('https://objectstore.surf.nl/.../data/openalex/works/data_0.parquet')
+```
 
--- Query at a specific snapshot version
-SELECT COUNT(*) FROM lake.openalex.works AT (VERSION => 2);
+This is appropriate for completeness/profiling cells where exact counts are less important than speed. For CRIS (2.4 M rows), query the catalog directly — it scans in seconds.
+
+---
+
+## 10  Nested list_filter for array-of-struct completeness checks
+
+Avoid double-UNNEST by nesting `list_filter` lambdas. `NULL LIKE 'pattern'` evaluates to NULL (falsy), so no explicit null-guard is needed inside lambdas.
+
+```sql
+-- OpenAlex: works with at least one valid ROR in any authorship institution
+COUNT_IF(array_length(list_filter(
+    authorships,
+    x -> array_length(list_filter(x.institutions, y -> y.ror LIKE 'https://ror.org/%')) > 0
+)) > 0)
+
+-- OpenAlex: works with a Dutch corresponding author
+COUNT_IF(array_length(list_filter(
+    authorships,
+    x -> x.is_corresponding
+      AND array_length(list_filter(x.institutions, y -> y.country_code = 'NL')) > 0
+)) > 0)
+
+-- OpenAlex: works with at least one ORCID-linked author
+COUNT_IF(array_length(list_filter(
+    authorships,
+    x -> x.author.orcid LIKE 'https://orcid.org/%'
+)) > 0)
+
+-- OpenAIRE: publications linked to an ROR-identified organisation
+COUNT_IF(array_length(list_filter(
+    organizations,
+    x -> array_length(list_filter(
+        x.pids, y -> y.scheme = 'ROR' AND y.value LIKE 'https://ror.org/%'
+    )) > 0
+)) > 0)
+
+-- OpenAIRE: publications with any ORCID-linked author (bare id, not URI)
+COUNT_IF(array_length(list_filter(
+    authors,
+    x -> x.pid.id.scheme = 'orcid' AND x.pid.id.value IS NOT NULL
+)) > 0)
+
+-- OpenAIRE: publications with a Creative Commons licence in any instance
+COUNT_IF(array_length(list_filter(
+    instances,
+    x -> x.license IS NOT NULL AND (
+        lower(x.license) LIKE '%creativecommons%'
+        OR lower(x.license) LIKE 'cc-%'
+        OR lower(x.license) LIKE 'cc by%'
+    )
+)) > 0)
 ```

@@ -158,6 +158,65 @@ No indexes or partition pruning exist for nested fields. Every UNNEST query is a
 
 Prefer pre-computed fields: `openalex.institutions.works_count` gives institution publication counts in < 1 s versus 15+ min for a direct scan of `openalex.works`.
 
+**Parquet shard strategy for large tables:** For aggregate/completeness queries over `openalex.works` or `openaire.publications`, read the first shard directly via `read_parquet()` to keep the cell fast. The shard URL follows the pattern:
+```
+https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/data/{schema}/{table}/data_0.parquet
+```
+For example:
+- `data/openalex/works/data_0.parquet`
+- `data/openaire/publications/data_0.parquet`
+
+Use `read_parquet(url)` inside `mo.sql()` — this bypasses the ducklake catalog and reads the file directly over HTTPS.
+
+### Nested list_filter for array-of-struct completeness checks
+
+To check presence of a value inside a nested array without double-UNNEST, use nested `list_filter` lambdas:
+
+```sql
+-- Works with at least one NL-affiliated corresponding author (OpenAlex)
+COUNT_IF(array_length(list_filter(
+    authorships,
+    x -> x.is_corresponding
+      AND array_length(list_filter(x.institutions, y -> y.country_code = 'NL')) > 0
+)) > 0)
+
+-- Works with at least one valid ROR in any authorship institution
+COUNT_IF(array_length(list_filter(
+    authorships,
+    x -> array_length(list_filter(x.institutions, y -> y.ror LIKE 'https://ror.org/%')) > 0
+)) > 0)
+
+-- OpenAIRE publications with at least one ROR-linked organisation
+COUNT_IF(array_length(list_filter(
+    organizations,
+    x -> array_length(list_filter(
+        x.pids, y -> y.scheme = 'ROR' AND y.value LIKE 'https://ror.org/%'
+    )) > 0
+)) > 0)
+```
+
+`NULL LIKE 'pattern'` evaluates to NULL (falsy) in DuckDB, so NULL-guarding inside lambdas is not needed.
+
+### Schema limitations to know before querying
+
+**openaire.publications:**
+- `mainTitle` (not `title`), `publicationDate` (not `publication_date`)
+- **No abstract field.** Abstract is not part of the OpenAIRE Graph schema.
+- **No corresponding-author concept.** Authors have rank but no is_corresponding flag.
+- ORCID via `authors[].pid.id.scheme = 'orcid'` — value is a **bare ID** (e.g. `0000-0001-7284-3590`), not a full URI.
+- OA status: `bestAccessRight.code` (`OPEN`, `RESTRICTED`, …) or `openAccessColor` (`gold`, `green`, `bronze`, `closed`)
+- CC licence: check `instances[].license` — values vary (`CC BY 4.0`, `https://creativecommons.org/…`, `cc-by`); use broad `LIKE '%creativecommons%' OR LIKE 'cc-%' OR LIKE 'cc by%'`
+- Funder: `array_length(projects) > 0`
+- ISSN: `container.issnPrinted` / `container.issnOnline`
+
+**cris.publications (CERIF-XML):**
+- `"cerif:Title"`, `"cerif:Abstract"`, `"cerif:ISSN"` are **STRUCT arrays** — check with `array_length(col) > 0` (not `IS NOT NULL` alone). Access first element as `col[1]["#text"]`.
+- `"cerif:DOI"` is a **plain DOI string** (e.g. `10.1234/abc`) — no `https://doi.org/` prefix. Use `LIKE '10.%'` for format validation.
+- `"cerif:PublicationDate"` is **VARCHAR** (free text, not parseable as DATE in all rows).
+- `repository_info.ror` is **institution-level** (one per repository), not per-author.
+- **No ORCID** — use `cerif:Person.@id` (UUID) as person identifier within CRIS; cross-link to other sources via DOI.
+- **No funder metadata** in the CERIF-XML schema as harvested.
+
 ### Linting in this repo
 
 `uvx` is not on PATH in the sandbox — use `uv tool run <tool>` instead:

@@ -146,10 +146,18 @@ authors[]
   .name / .surname / .rank
   .pid
     .id.scheme    -- 'orcid', 'mag', …
-    .id.value     -- e.g. '0000-0001-7284-3590'
+    .id.value     -- e.g. '0000-0001-7284-3590'  (bare id, NOT a full URI)
     .provenance.provenance
     .provenance.trust
 ```
+
+**Schema limitations:**
+- **No abstract field** — abstract is not part of the OpenAIRE Graph publications schema.
+- **No corresponding-author flag** — authors have `.rank` but no `is_corresponding` boolean.
+- ORCID values in `authors[].pid.id.value` are **bare IDs** (e.g. `0000-0001-7284-3590`), not full URIs.
+- CC licence check requires scanning `instances[].license`; values are inconsistently formatted (`CC BY 4.0`, `https://creativecommons.org/licenses/by/4.0/`, `cc-by`) — use broad LIKE patterns.
+- Funder presence check: `array_length(projects) > 0` (projects are linked funding records).
+- ISSN: `container.issnPrinted` and `container.issnOnline` (both nullable).
 
 ### openaire.organizations — 448 K rows
 
@@ -233,6 +241,13 @@ cerif:Authors
 ```
 
 > Note: CRIS does not expose ORCID — use `cerif:Person.@id` (UUID) as the person identifier within this dataset. Cross-link to OpenAlex/OpenAIRE via DOI.
+
+**Schema limitations and field-type gotchas:**
+- `"cerif:Title"`, `"cerif:Abstract"`, `"cerif:ISSN"` are **STRUCT arrays** — test presence with `array_length(col) > 0`, not just `IS NOT NULL`. Access first element via `col[1]["#text"]`.
+- `"cerif:DOI"` is a **plain DOI string** (e.g. `10.1234/abc`) with no `https://doi.org/` prefix. Validate with `LIKE '10.%'`.
+- `"cerif:PublicationDate"` is **VARCHAR free text** — do not cast to DATE without sanitising first.
+- `repository_info.ror` is **institution-level** (one ROR per repository), not per-author or per-publication.
+- **No funder metadata** is available in the CERIF-XML schema as harvested via OAI-PMH.
 
 ---
 
