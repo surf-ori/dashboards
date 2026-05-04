@@ -115,7 +115,7 @@ async def load_nl_baseline(io, openpyxl, pl, sys):
 
 
 @app.cell(hide_code=True)
-def load_nl_openalex_orgs(mo, nl_baseline_df, pl):
+def load_nl_openalex_orgs(mo, nl_baseline_df):
     # query OpenAlex institutions for orgs in the NL baseline, anchored by ROR
     _rors = nl_baseline_df['ror'].drop_nulls().to_list()
     _rors_clause = ', '.join(f"'{r}'" for r in _rors) if _rors else "''"
@@ -188,7 +188,7 @@ def load_nl_openaire_orgs(mo, nl_baseline_df, pl):
 async def load_nl_endpoint_table(io, openpyxl, pl, sys):
     # fetch the NL organisations → OpenAIRE datasource endpoint table from Zenodo
     # (DOI: 10.5281/zenodo.18959652); maps openaire_org_id to OpenAIRE_DataSource_ID + OAI endpoints
-    _ZENODO_URL = 'https://zenodo.org/api/records/18959652/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx/content'
+    _ZENODO_URL = 'https://zenodo.org/api/records/19470205/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx/content'
 
     if 'pyodide' in sys.modules:
         import pyodide.http as _pyodide_http
@@ -210,7 +210,7 @@ async def load_nl_endpoint_table(io, openpyxl, pl, sys):
 
 
 @app.cell(hide_code=True)
-def load_nl_openaire_datasources(mo, nl_endpoint_df, pl):
+def load_nl_openaire_datasources(mo, nl_endpoint_df):
     # query OpenAIRE datasources table for datasource IDs from the endpoint table
     _ds_ids = nl_endpoint_df['OpenAIRE_DataSource_ID'].drop_nulls().unique().to_list()
     _ids_clause = ', '.join(f"'{i}'" for i in _ds_ids) if _ds_ids else "''"
@@ -1119,6 +1119,45 @@ def enrichment(mo, nl_openalex_orgs_df, pl, works_compl_df):
                     label="Low-priority", bordered=True),
         ], gap=3),
         mo.accordion({iv['title']: _make_item(iv) for iv in INTERVENTIONS}),
+        mo.callout(
+            mo.md("**Next steps:** Implement the suggested enrichment pipelines and re-check this dashboard. "
+                  "Questions? Contact [ori-team@surf.nl](mailto:ori-team@surf.nl)."),
+            kind='success',
+        ),
+    ], gap=4)
+
+    _enrichment_content
+    return
+
+
+@app.cell(hide_code=True)
+def divider(mo):
+    # render a horizontal rule to visually separate the main content from the footer
+    mo.md("""
+    ---
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def footer(date, mo, org_select):
+    # render a small footer with attribution, selected organisation, and today's date
+    mo.md(f"""
+    <div style="font-size:.75rem;color:#999;display:flex;justify-content:space-between;flex-wrap:wrap;">
+    <span>ORI Quality Dashboard · PID to Portal · SURF ORI team</span>
+    <span>Organisation: {', '.join(org_select.value) or '(none)'} · Data: OpenAlex / OpenAIRE via SURF DuckLake · {date.today()}</span>
+    </div>
+    """)
+    return
+
+
+if __name__ == "__main__":
+    app.run()
+p.run()
+":
+    app.run()
+)
+mo.accordion({iv['title']: _make_item(iv) for iv in INTERVENTIONS}),
         mo.callout(
             mo.md("**Next steps:** Implement the suggested enrichment pipelines and re-check this dashboard. "
                   "Questions? Contact [ori-team@surf.nl](mailto:ori-team@surf.nl)."),
