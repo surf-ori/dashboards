@@ -115,11 +115,12 @@ async def load_nl_baseline(io, openpyxl, pl, sys):
 
 
 @app.cell(hide_code=True)
-def load_nl_institutions(mo):
-    # query NL education and funder institutions from the OpenAlex institutions catalog table
-    nl_inst_df = mo.sql(
-        """
-        -- Load data about Dutch Institutions in OpenAlex
+def load_nl_openalex_orgs(mo, nl_baseline_df, pl):
+    # query OpenAlex institutions for orgs in the NL baseline, anchored by ROR
+    _rors = nl_baseline_df['ror'].drop_nulls().to_list()
+    _rors_clause = ', '.join(f"'{r}'" for r in _rors) if _rors else "''"
+    nl_openalex_orgs_df = mo.sql(
+        f"""
         SELECT
             display_name,
             ror,
@@ -136,31 +137,33 @@ def load_nl_institutions(mo):
             ids.wikipedia AS wikipedia_url,
             homepage_url
         FROM openalex.institutions
-        WHERE country_code = 'NL'
-          AND type IN ('education', 'funder')
-          AND works_count > 1000
+        WHERE ror IN ({_rors_clause})
         ORDER BY works_count DESC
         """,
         output=False
     )
-    return (nl_inst_df,)
+    return (nl_openalex_orgs_df,)
 
 
 @app.cell(hide_code=True)
-def load_openaire_orgs(mo, pl):
-    # query NL organisations from the OpenAIRE organizations catalog table and extract PIDs
-    oa_orgs_df = mo.sql("""
+def load_nl_openaire_orgs(mo, nl_baseline_df, pl):
+    # query OpenAIRE organizations for orgs in the NL baseline, anchored by ROR
+    _rors = nl_baseline_df['ror'].drop_nulls().to_list()
+    _rors_list = '[' + ', '.join(f"'{r}'" for r in _rors) + ']' if _rors else "['']"
+    nl_openaire_orgs_df = mo.sql(f"""
     SELECT
-        legalName,
-        legalShortName,
-        websiteUrl,
-        id AS openaire_id,
-        pids
-    FROM openaire.organizations
-    WHERE country.code = 'NL'
+        o.legalName,
+        o.legalShortName,
+        o.websiteUrl,
+        o.id AS openaire_orgs_id,
+        o.pids
+    FROM openaire.organizations AS o,
+         UNNEST(o.pids) AS unnest
+    WHERE unnest.scheme = 'ROR'
+      AND list_contains({_rors_list}, unnest.value)
     """, output=False)
-    # Extract ROR from pids list
-    oa_orgs_df = oa_orgs_df.with_columns(
+    # Extract PIDs from pids list
+    nl_openaire_orgs_df = nl_openaire_orgs_df.with_columns(
         pl.col('pids').list.eval(
             pl.when(pl.element().struct.field('scheme').str.to_uppercase() == 'ROR')
             .then(pl.element().struct.field('value'))
@@ -178,7 +181,45 @@ def load_openaire_orgs(mo, pl):
             .then(pl.element().struct.field('value'))
         ).list.drop_nulls().list.first().alias('wikidata'),
     )
-    return (oa_orgs_df,)
+    return (nl_openaire_orgs_df,)
+
+
+@app.cell(hide_code=True)
+async def load_nl_endpoint_table(io, openpyxl, pl, sys):
+    # fetch the NL organisations → OpenAIRE datasource endpoint table from Zenodo
+    # (DOI: 10.5281/zenodo.18959652); maps openaire_org_id to OpenAIRE_DataSource_ID + OAI endpoints
+    _ZENODO_URL = 'https://zenodo.org/api/records/18959652/files/nl_orgs_openaire_datasources_with_endpoint_public.xlsx/content'
+
+    if 'pyodide' in sys.modules:
+        import pyodide.http as _pyodide_http
+        _resp = await _pyodide_http.pyfetch(_ZENODO_URL)
+        _raw = await _resp.bytes()
+    else:
+        import urllib.request as _urllib_request
+        with _urllib_request.urlopen(_ZENODO_URL) as _r:
+            _raw = _r.read()
+
+    _wb = openpyxl.load_workbook(io.BytesIO(_raw), read_only=True)
+    _ws = _wb.active
+    _all_rows = list(_ws.iter_rows(values_only=True))
+    _headers = [str(h) if h is not None else f'col_{i}' for i, h in enumerate(_all_rows[0])]
+    nl_endpoint_df = pl.DataFrame(
+        {_headers[i]: [r[i] for r in _all_rows[1:]] for i in range(len(_headers))}
+    )
+    return (nl_endpoint_df,)
+
+
+@app.cell(hide_code=True)
+def load_nl_openaire_datasources(mo, nl_endpoint_df, pl):
+    # query OpenAIRE datasources table for datasource IDs from the endpoint table
+    _ds_ids = nl_endpoint_df['OpenAIRE_DataSource_ID'].drop_nulls().unique().to_list()
+    _ids_clause = ', '.join(f"'{i}'" for i in _ds_ids) if _ds_ids else "''"
+    nl_datasources_df = mo.sql(f"""
+    SELECT *
+    FROM openaire.datasources
+    WHERE id IN ({_ids_clause})
+    """, output=False)
+    return (nl_datasources_df,)
 
 
 @app.cell(hide_code=True)
@@ -359,7 +400,7 @@ def selected_org(
     barcelona_toggle,
     group_select,
     nl_baseline_df,
-    nl_inst_df,
+    nl_openalex_orgs_df,
     org_select,
     pl,
 ):
@@ -377,7 +418,7 @@ def selected_org(
         .filter(pl.col('full_name').is_in(org_select.value))
         ['ror'].drop_nulls().to_list()
     )
-    sel_org = nl_inst_df.filter(pl.col('ror').is_in(_sel_rors))
+    sel_org = nl_openalex_orgs_df.filter(pl.col('ror').is_in(_sel_rors))
     return filtered_baseline, sel_org
 
 
@@ -425,7 +466,9 @@ def overview(
     filtered_baseline,
     mo,
     nl_baseline_df,
-    oa_orgs_df,
+    nl_datasources_df,
+    nl_endpoint_df,
+    nl_openaire_orgs_df,
     openaire_pubs_df,
     openalex_works_df,
     org_select,
@@ -435,7 +478,9 @@ def overview(
     _n_baseline    = nl_baseline_df.height
     _n_filtered    = filtered_baseline.height
     _n_barcelona   = nl_baseline_df.filter(pl.col('barcelona_signatory')).height
-    _n_oa_orgs     = oa_orgs_df.height
+    _n_oa_orgs     = nl_openaire_orgs_df.height
+    _n_ds_links    = nl_endpoint_df.height
+    _n_datasources = nl_datasources_df.height
 
     # Get record counts from sources
     _openalex_works = openalex_works_df['openalex_works_count'][0] if openalex_works_df.height > 0 else 0
@@ -478,6 +523,12 @@ def overview(
             value=f"{_cris_pubs:,}",
             label="CRIS Publications",
             caption=_sel_caption,
+            bordered=True,
+        ),
+        mo.stat(
+            value=f"{_n_ds_links:,}",
+            label="Datasource / CRIS Links",
+            caption=f"{_n_datasources} unique datasources in OpenAIRE",
             bordered=True,
         ),
         mo.stat(
@@ -536,7 +587,7 @@ def completeness(
     alt,
     entity_select,
     mo,
-    nl_inst_df,
+    nl_openalex_orgs_df,
     org_select,
     pl,
     sel_org,
@@ -611,14 +662,14 @@ def completeness(
     _id_fields = ['has_ror', 'has_grid', 'has_wikidata', 'has_wikipedia', 'has_homepage']
     _id_labels = ['ROR', 'GRID', 'Wikidata', 'Wikipedia', 'Homepage URL']
     _id_pcts   = [
-        round(nl_inst_df[f].sum() * 100 / nl_inst_df.height, 1)
+        round(nl_openalex_orgs_df[f].sum() * 100 / nl_openalex_orgs_df.height, 1)
         for f in _id_fields
     ]
     _inst_compl_df = pl.DataFrame({
         'Identifier': _id_labels,
         'pct':        _id_pcts,
-        'count':      [nl_inst_df[f].sum() for f in _id_fields],
-        'total':      [nl_inst_df.height] * 5,
+        'count':      [nl_openalex_orgs_df[f].sum() for f in _id_fields],
+        'total':      [nl_openalex_orgs_df.height] * 5,
     })
     _inst_bar = (
         alt.Chart(_inst_compl_df.to_pandas())
@@ -639,7 +690,7 @@ def completeness(
             ],
         )
         .properties(
-            title=f'Institution identifier completeness — {nl_inst_df.height} NL institutions (OpenAlex)',
+            title=f'Institution identifier completeness — {nl_openalex_orgs_df.height} NL institutions (OpenAlex)',
             height=200, width='container',
         )
     )
@@ -704,12 +755,12 @@ def completeness(
 
 
 @app.cell(hide_code=True)
-def coverage(alt, mo, nl_inst_df, oa_orgs_df, pl):
+def coverage(alt, mo, nl_openaire_orgs_df, nl_openalex_orgs_df, pl):
     # build the coverage tab: cross-source institution presence and PID completeness comparison
     # -----------------------------------------------------------------------
     # Join OpenAlex institutions with OpenAIRE organizations by ROR
     # -----------------------------------------------------------------------
-    _openalex_nl = nl_inst_df.select([
+    _openalex_nl = nl_openalex_orgs_df.select([
         pl.col('display_name').alias('Institution'),
         pl.col('ror'),
         pl.col('works_count').alias('OpenAlex works'),
@@ -717,7 +768,7 @@ def coverage(alt, mo, nl_inst_df, oa_orgs_df, pl):
         pl.col('has_wikidata').alias('OpenAlex Wikidata'),
     ])
 
-    _openaire_nl = oa_orgs_df.filter(pl.col('ror').is_not_null()).select([
+    _openaire_nl = nl_openaire_orgs_df.filter(pl.col('ror').is_not_null()).select([
         pl.col('ror'),
         pl.col('legalName').alias('OpenAIRE name'),
         pl.col('isni').is_not_null().alias('OpenAIRE ISNI'),
@@ -764,8 +815,8 @@ def coverage(alt, mo, nl_inst_df, oa_orgs_df, pl):
         'PID': ['ROR', 'GRID', 'Wikidata'],
         'OpenAlex %': [
             round(_coverage_df['has_ror'].sum() * 100 / _coverage_df.height, 1) if 'has_ror' in _coverage_df.columns else 100.0,
-            round(nl_inst_df['has_grid'].sum() * 100 / nl_inst_df.height, 1),
-            round(nl_inst_df['has_wikidata'].sum() * 100 / nl_inst_df.height, 1),
+            round(nl_openalex_orgs_df['has_grid'].sum() * 100 / nl_openalex_orgs_df.height, 1),
+            round(nl_openalex_orgs_df['has_wikidata'].sum() * 100 / nl_openalex_orgs_df.height, 1),
         ],
         'OpenAIRE %': [
             round(_openaire_nl.height * 100 / _openalex_nl.height, 1),
@@ -835,7 +886,7 @@ def coverage(alt, mo, nl_inst_df, oa_orgs_df, pl):
 
 
 @app.cell(hide_code=True)
-def accuracy(alt, mo, nl_inst_df, pl, works_compl_df):
+def accuracy(alt, mo, nl_openalex_orgs_df, pl, works_compl_df):
     # build the accuracy tab: identifier format validation checks (ROR, GRID, Wikidata)
     # -----------------------------------------------------------------------
     # Identifier format validation (pattern checks)
@@ -846,7 +897,7 @@ def accuracy(alt, mo, nl_inst_df, pl, works_compl_df):
     # ORCID format: 0000-0000-0000-000X
 
     # For institutions: check ROR format validity
-    _ror_df = nl_inst_df.select([
+    _ror_df = nl_openalex_orgs_df.select([
         pl.col('display_name'),
         pl.col('ror'),
     ]).with_columns([
@@ -864,12 +915,12 @@ def accuracy(alt, mo, nl_inst_df, pl, works_compl_df):
         ],
         'Pass %': [
             _ror_valid_pct,
-            round(nl_inst_df['has_grid'].sum() * 100 / nl_inst_df.height, 1),
+            round(nl_openalex_orgs_df['has_grid'].sum() * 100 / nl_openalex_orgs_df.height, 1),
             round(
-                nl_inst_df.filter(
+                nl_openalex_orgs_df.filter(
                     pl.col('has_wikidata') & pl.col('wikidata_id').str.starts_with('Q')
-                ).height * 100 / nl_inst_df.filter(pl.col('has_wikidata')).height
-                if nl_inst_df.filter(pl.col('has_wikidata')).height > 0 else 0, 1
+                ).height * 100 / nl_openalex_orgs_df.filter(pl.col('has_wikidata')).height
+                if nl_openalex_orgs_df.filter(pl.col('has_wikidata')).height > 0 else 0, 1
             ),
         ],
         'Source': ['OpenAlex NL institutions', 'OpenAlex NL institutions', 'OpenAlex NL institutions'],
@@ -943,7 +994,7 @@ def accuracy(alt, mo, nl_inst_df, pl, works_compl_df):
 
 
 @app.cell(hide_code=True)
-def enrichment(mo, nl_inst_df, pl, works_compl_df):
+def enrichment(mo, nl_openalex_orgs_df, pl, works_compl_df):
     # build the enrichment tab: prioritised recommendations to fill metadata gaps
     # -----------------------------------------------------------------------
     # Derive enrichment opportunities from completeness data
@@ -951,10 +1002,10 @@ def enrichment(mo, nl_inst_df, pl, works_compl_df):
     _missing_pub_fields = works_compl_df.filter(pl.col('pct') < 80).sort('pct').to_dicts()
     _missing_inst_fields = [
         f for f, has in [
-            ('GRID', nl_inst_df['has_grid'].mean() < 0.95),
-            ('Wikidata', nl_inst_df['has_wikidata'].mean() < 0.95),
-            ('Wikipedia', nl_inst_df['has_wikipedia'].mean() < 0.95),
-            ('Homepage URL', nl_inst_df['has_homepage'].mean() < 0.95),
+            ('GRID', nl_openalex_orgs_df['has_grid'].mean() < 0.95),
+            ('Wikidata', nl_openalex_orgs_df['has_wikidata'].mean() < 0.95),
+            ('Wikipedia', nl_openalex_orgs_df['has_wikipedia'].mean() < 0.95),
+            ('Homepage URL', nl_openalex_orgs_df['has_homepage'].mean() < 0.95),
         ] if has
     ]
 
@@ -1031,7 +1082,7 @@ def enrichment(mo, nl_inst_df, pl, works_compl_df):
             'priority': 'Low',
             'title': 'Add Wikidata IDs to institutions',
             'description': (
-                f"{nl_inst_df.filter(~pl.col('has_wikidata')).height} NL institutions are missing Wikidata IDs. "
+                f"{nl_openalex_orgs_df.filter(~pl.col('has_wikidata')).height} NL institutions are missing Wikidata IDs. "
                 'Wikidata enables linked data connections across multiple knowledge bases.'
             ),
             'effort': 'Low',
