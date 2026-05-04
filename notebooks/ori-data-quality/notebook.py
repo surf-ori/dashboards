@@ -3,6 +3,7 @@
 # dependencies = [
 #     "altair==6.1.0",
 #     "duckdb==1.5.2",
+#     "jedi<0.20.0",
 #     "marimo>=0.10.0",
 #     "openpyxl==3.1.5",
 #     "pandas==3.0.2",
