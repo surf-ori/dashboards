@@ -122,6 +122,7 @@ def load_nl_openalex_orgs(mo, nl_baseline_df):
     nl_openalex_orgs_df = mo.sql(
         f"""
         SELECT
+            id AS openalex_orgs_id,
             display_name,
             ror,
             type,
@@ -223,47 +224,75 @@ def load_nl_openaire_datasources(mo, nl_endpoint_df):
 
 
 @app.cell(hide_code=True)
-def load_source_record_counts(mo, nl_baseline_df, org_select, pl):
-    # Record counts for selected organisations across three sources.
+def load_openalex_publications_counts(mo, nl_baseline_df, nl_openalex_orgs_df, org_select, pl):
+    # Count OpenAlex works for selected organisations by querying openalex.works directly.
+    # Uses openalex_orgs_id (institution ID) to filter authorships[].institutions[].id.
+    # WARNING: full scan of openalex.works (364 M rows via UNNEST) — expect 15+ minutes.
+    _sel_rors = (
+        nl_baseline_df
+        .filter(pl.col('full_name').is_in(org_select.value))
+        ['ror'].drop_nulls().to_list()
+    )
+    _openalex_ids = (
+        nl_openalex_orgs_df
+        .filter(pl.col('ror').is_in(_sel_rors))
+        ['openalex_orgs_id'].drop_nulls().to_list()
+    )
+    _openalex_ids_list = '[' + ', '.join(f"'{i}'" for i in _openalex_ids) + ']' if _openalex_ids else "['']"
+    openalex_works_df = mo.sql(f"""
+    SELECT COUNT(DISTINCT w.id) AS openalex_works_count
+    FROM openalex.works AS w,
+         UNNEST(w.authorships) AS unnest
+    WHERE array_length(list_filter(
+        unnest.institutions,
+        x -> list_contains({_openalex_ids_list}, x.id)
+    )) > 0
+    """, output=False)
+    return (openalex_works_df,)
 
+
+@app.cell(hide_code=True)
+def load_openaire_pubs_counts(mo, nl_baseline_df, nl_openaire_orgs_df, org_select, pl):
+    # Count OpenAIRE publications for selected organisations using openaire_orgs_id.
+    # Filters publications.organizations[].id — full scan of 206 M rows.
+    _sel_rors = (
+        nl_baseline_df
+        .filter(pl.col('full_name').is_in(org_select.value))
+        ['ror'].drop_nulls().to_list()
+    )
+    _openaire_ids = (
+        nl_openaire_orgs_df
+        .filter(pl.col('ror').is_in(_sel_rors))
+        ['openaire_orgs_id'].drop_nulls().to_list()
+    )
+    _openaire_ids_list = '[' + ', '.join(f"'{i}'" for i in _openaire_ids) + ']' if _openaire_ids else "['']"
+    openaire_pubs_df = mo.sql(f"""
+    SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
+    FROM openaire.publications AS pub
+    WHERE array_length(list_filter(
+        pub.organizations,
+        x -> list_contains({_openaire_ids_list}, x.id)
+    )) > 0
+    """, output=False)
+    return (openaire_pubs_df,)
+
+
+@app.cell(hide_code=True)
+def load_cris_pubs_counts(mo, nl_baseline_df, org_select, pl):
+    # Count CRIS publications for selected organisations — fast scan of 2.4 M rows.
     _sel_rors = (
         nl_baseline_df
         .filter(pl.col('full_name').is_in(org_select.value))
         ['ror'].drop_nulls().to_list()
     )
     _rors_clause = ', '.join(f"'{r}'" for r in _sel_rors) if _sel_rors else "''"
-    # DuckDB list literal for list_contains() inside lambdas
-    _rors_list = '[' + ', '.join(f"'{r}'" for r in _sel_rors) + ']' if _sel_rors else "['']"
-
-    # OpenAlex: SUM pre-computed works_count from the institutions table (120 K rows).
-    # Direct scan of openalex.works (364 M rows) via UNNEST took 15+ minutes.
-    openalex_works_df = mo.sql(f"""
-    SELECT COALESCE(SUM(works_count), 0) AS openalex_works_count
-    FROM openalex.institutions
-    WHERE ror IN ({_rors_clause})
-    """, output=False)
-
-    # OpenAIRE publications: publications.organizations[] has .legalName and .pids[{scheme,value}]
-    # but no .id field — filter directly by ROR in organizations[].pids.
-    # Still a 206 M row scan; relations table (225 GB) offers no speed advantage without indexes.
-    openaire_pubs_df = mo.sql(f"""
-    SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
-    FROM openaire.publications AS pub,
-         UNNEST(pub.organizations) AS unnest
-    WHERE array_length(list_filter(
-        unnest.pids,
-        x -> x.scheme = 'ROR' AND list_contains({_rors_list}, x.value)
-    )) > 0
-    """, output=False)
-
-    # CRIS: COUNT(*) on 2.4 M rows filtered by repository_info.ror — fast.
     cris_pubs_df = mo.sql(f"""
     SELECT COUNT(*) AS cris_pubs_count
     FROM cris.publications
     WHERE repository_info.ror IS NOT NULL
       AND repository_info.ror IN ({_rors_clause})
     """, output=False)
-    return cris_pubs_df, openaire_pubs_df, openalex_works_df
+    return (cris_pubs_df,)
 
 
 @app.cell(hide_code=True)
