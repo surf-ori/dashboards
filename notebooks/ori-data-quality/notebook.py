@@ -15,7 +15,7 @@
 
 import marimo
 
-__generated_with = "0.23.3"
+__generated_with = "0.23.4"
 app = marimo.App(width="full", app_title="ORI Data Quality Dashboard")
 
 
@@ -118,7 +118,7 @@ async def load_nl_baseline(io, openpyxl, pl, sys):
 def load_nl_institutions(mo):
     # query NL education and funder institutions from the OpenAlex institutions catalog table
     nl_inst_df = mo.sql(
-        """
+        f"""
         -- Load data about Dutch Institutions in OpenAlex
         SELECT
             display_name,
@@ -1102,4 +1102,3 @@ def footer(date, mo, org_select):
 
 if __name__ == "__main__":
     app.run()
-
