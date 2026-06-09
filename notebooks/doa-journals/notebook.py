@@ -22,7 +22,7 @@ app = marimo.App(
 @app.cell
 def _(mo):
     mo.hstack([
-            mo.md('[::streamline-plump:return-3:: Back to all dashboards](..)'),
+            mo.md('[::streamline-plump:return-3-remix:: Back to all dashboards](.)'),
             mo.image('public/DiamondOpenAccess_expertise-center_logo_RGB_v1.svg', height=70)
         ], justify='space-between')
     return
