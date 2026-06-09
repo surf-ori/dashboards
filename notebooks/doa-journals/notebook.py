@@ -20,6 +20,15 @@ app = marimo.App(
 
 
 @app.cell
+def _(mo):
+    mo.hstack([
+            mo.md('[::streamline-plump:return-3:: Back to all dashboards](..)'),
+            mo.image('public/DiamondOpenAccess_expertise-center_logo_RGB_v1.svg', height=70)
+        ], justify='space-between')
+    return
+
+
+@app.cell
 async def _():
     import micropip
     await micropip.install(['polars', 'altair', 'openpyxl'])
@@ -29,12 +38,6 @@ async def _():
     import altair as alt
 
     return alt, mo, pl
-
-
-@app.cell
-def _(mo):
-    mo.hstack([mo.image('public/DiamondOpenAccess_expertise-center_logo_RGB_v1.svg', width=300)], justify='end')
-    return
 
 
 @app.cell
@@ -262,7 +265,7 @@ def _(alt, get_state, journals, mo, set_state):
                 # alt.Tooltip(field='Publisher')
             ]
         )
-    
+
     )
 
     platform_chart = mo.ui.altair_chart(
@@ -284,7 +287,20 @@ def _(alt, get_state, journals, mo, set_state):
 
 
 @app.cell
-def _():
+def _(mo):
+    mo.Html('''
+    <footer class="mt-10 pt-6 border-t border-gray-200 text-center text-sm text-gray-600">
+        This dashboard was made by:
+        <div class="italic text-gray-500 text-sm">Chiara Livio  <a href="https://orcid.org/0000-0003-1219-1775"><img src="public/ORCID-iD_icon_unauth_vector.svg" alt="Orcid link" class="inline h-4"></a></div>
+        <div class="italic text-gray-500 text-sm">Till Bey  <a href="https://orcid.org/0000-0001-7509-9875"><img src="public/ORCID-iD_icon_unauth_vector.svg" alt="Orcid link" class="inline h-4"></a> <a href="https://github.com/tillbey"><img src="public/GitHub_Invertocat_Black.svg" alt="GitHub logo" class="inline h-4"></a></div>
+        <p class="mb-2">
+          <p class="mb-2">Run by the <a href="https://www.surf.nl/themas/open-science/open-research-information" target="_blank" class="text-blue-500 hover:underline">SURF Open Science Innovation team</a>.
+          For feedback you can <a href="https://github.com/surf-ori/dashboards/issues" target="_blank" class="text-blue-500 hover:underline">raise an issue here</a>.
+          Source code under <a href="https://github.com/surf-ori/dashboards" target="_blank" class="text-blue-500 hover:underline">https://github.com/surf-ori/dashboards</a>.
+          This website is licenced as CC-BY. Data powering the dashboard may have a different licence.</p>
+          <img src="https://www.surf.nl/themes/surf/logo.svg" alt="SURF logo" class="w-20 h-auto mx-auto mb-3">
+        </footer>
+           ''')
     return
 
 
