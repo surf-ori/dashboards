@@ -1,7 +1,12 @@
 {
     "title": "Diamond Open Access journals in the Netherlands",
     "image": "public/screenshot-doa.png",
+    "logo": "public/DiamondOpenAccess_expertise-center_logo_RGB_v1.svg",
     "authors": [
+        {
+            "name": "Chiara Livio",
+            "orcid": "https://orcid.org/0000-0003-1219-1775"
+        },
         {
             "name": "Till Bey",
             "github": "https://github.com/tillbey",
