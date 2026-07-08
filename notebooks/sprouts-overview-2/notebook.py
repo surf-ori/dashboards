@@ -1,18 +1,19 @@
 # /// script
 # requires-python = ">=3.13"
 # dependencies = [
-#     "altair==6.0.0",
-#     "duckdb==1.5.2",
+#     "altair==6.2.2",
+#     "duckdb==1.5.4",
 #     "marimo>=0.20.2",
-#     "numpy==2.4.3",
-#     "polars[pyarrow]==1.39.3",
-#     "requests==2.32.5",
+#     "numpy==2.5.1",
+#     "polars[pyarrow]==1.42.1",
+#     "requests==2.34.2",
+#     "sqlglot==30.12.0",
 # ]
 # ///
 
 import marimo
 
-__generated_with = "0.23.2"
+__generated_with = "0.23.13"
 app = marimo.App(
     width="medium",
     app_title="Open Research Information | Datasets Overview",
@@ -33,7 +34,7 @@ async def system():
     import duckdb
     import polars as pl
 
-    return duckdb, json, mo, pl, requests
+    return duckdb, mo, pl
 
 
 @app.cell(hide_code=True)
@@ -126,7 +127,7 @@ def catalog_loading(mo, url):
 @app.cell(hide_code=True)
 def catalog_statistics_data(mo):
     quick_statistics = mo.sql(
-        """
+        f"""
         SELECT table_name, record_count, file_size_bytes
             FROM __ducklake_metadata_sprouts.ducklake_table_stats
             FULL JOIN __ducklake_metadata_sprouts.ducklake_table
@@ -168,7 +169,7 @@ def data_section(mo):
 @app.cell
 def data_datasets(mo):
     datasets = mo.sql(
-        """
+        f"""
         FROM __ducklake_metadata_sprouts.ducklake_schema
         WHERE schema_name != 'main';
         """,
@@ -180,7 +181,7 @@ def data_datasets(mo):
 @app.cell
 def data_tables(mo):
     tables = mo.sql(
-        """
+        f"""
         SELECT *
         FROM __ducklake_metadata_sprouts.ducklake_table t
         JOIN __ducklake_metadata_sprouts.ducklake_table_stats s
@@ -197,7 +198,7 @@ def data_tables(mo):
 @app.cell
 def data_columns(mo):
     columns = mo.sql(
-        """
+        f"""
         SELECT *
         FROM __ducklake_metadata_sprouts.ducklake_column c
         JOIN __ducklake_metadata_sprouts.ducklake_column_tag t
@@ -227,7 +228,15 @@ def data_schema_tabs(datasets, mo):
 
 
 @app.cell
-def data_schema_details(datasets, latest_columns, mo, pl, quick_statistics, selector, tables):
+def data_schema_details(
+    datasets,
+    latest_columns,
+    mo,
+    pl,
+    quick_statistics,
+    selector,
+    tables,
+):
     # For the selected dataset show the tables as accordions and within each accordion show the list of columns, their types and a description
 
     selected_schema_id = datasets.filter(pl.col('schema_name') == selector.value)['schema_id'][0]
@@ -264,9 +273,9 @@ def query_section(mo):
 @app.cell
 def query_editor(mo):
     initial_code = """SELECT *
-FROM openapc.apc
-LIMIT 100
-"""
+    FROM openapc.apc
+    LIMIT 100
+    """
     editor = mo.ui.code_editor(value=initial_code, language="sql").form(submit_button_label="Run")
     editor
     return (editor,)
@@ -276,11 +285,6 @@ LIMIT 100
 def query_results(duckdb, editor, mo):
     mo.ui.table(duckdb.sql(editor.value)) if editor.value else mo.md("_Run the query above to see results._")
     return
-
-
-if __name__ == "__main__":
-    app.run()
-  return
 
 
 if __name__ == "__main__":
