@@ -20,6 +20,7 @@ The exported files will be placed in the specified output directory (default: _s
 # ]
 # ///
 
+import shutil
 import subprocess
 from typing import List, Union
 from pathlib import Path
@@ -172,6 +173,13 @@ def _export(folder: Path, output_dir: Path) -> List[dict]:
         for notebook in notebooks
         if _export_html_wasm(notebook / 'notebook.py', output_dir, format=_get_metadata(notebook).get('format', 'app'))
     ]
+
+    # Copy each notebook's public/ folder into _site/ so index page thumbnails resolve correctly.
+    # marimo export html-wasm does this automatically for WASM notebooks, but not for html format.
+    for notebook in notebooks:
+        public_src = notebook / 'public'
+        if public_src.is_dir():
+            shutil.copytree(public_src, output_dir / 'public', dirs_exist_ok=True)
 
     logger.info(f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}")
     return notebook_data
