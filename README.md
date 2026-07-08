@@ -15,6 +15,7 @@ Interactive dashboards exploring Dutch open research — CRIS repositories, ORCI
 | [Dutch ORCID Monitor](https://surf-ori.github.io/dashboards/orcid-monitor.html) | ORCID adoption and coverage across Dutch institutions |
 | [OAI-PMH Endpoint Status](https://surf-ori.github.io/dashboards/repository-status.html) | Live health status of Dutch repository OAI-PMH endpoints |
 | [Datasets in the ORI Data Lake](https://surf-ori.github.io/dashboards/sprouts-overview.html) | Overview of datasets available in the SURF ORI Sprouts data lake |
+| [ORI Datasets Overview (v2)](https://surf-ori.github.io/dashboards/sprouts-overview-2.html) | Editable notebook — live catalog browsing and ad-hoc SQL querying of the ORI DuckLake |
 | [ORI Data Quality](https://surf-ori.github.io/dashboards/ori-data-quality.html) | Data quality metrics across ORI datasets |
 
 ---
