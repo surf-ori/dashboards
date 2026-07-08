@@ -45,3 +45,11 @@ Watch imported `.py` modules for changes (not just the notebook file):
 2. Two modes:
    - **Autorun**: automatically executes cells affected by module changes
    - **Lazy**: marks affected cells as stale for manual execution
+
+The reloader tracks changes recursively through the import chain.
+
+Use case: develop logic in Python modules, use the notebook as an orchestrating DAG.
+
+## Responding to other files
+
+marimo has `mo.watch.file` and `mo.watch.file` utilities that can cause cells to update when a file/folder updates. 

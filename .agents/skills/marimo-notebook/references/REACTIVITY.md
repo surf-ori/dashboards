@@ -45,6 +45,16 @@ items.append(4)  # invisible to the DAG
 extended = items + [4]
 ```
 
+Mutations within the same cell that defines the variable are fine:
+
+```python
+@app.cell
+def _(pd):
+    df = pd.DataFrame({"a": [1, 2]})
+    df["b"] = [3, 4]  # same cell, fine
+    return (df,)
+```
+
 ## Deleting Cells
 
 Deleting a cell removes its global variables from memory. Cells that referenced those variables become invalidated.
@@ -52,3 +62,7 @@ Deleting a cell removes its global variables from memory. Cells that referenced 
 ## Disabling Cells
 
 Disable a cell to prevent it and its dependents from running. Re-enabling triggers a re-run if upstream cells changed while it was disabled.
+
+## Lazy Evaluation
+
+Instead of auto-running dependents, mark them stale for manual execution. Configure in runtime settings or use `mo.lazy()` for specific elements.

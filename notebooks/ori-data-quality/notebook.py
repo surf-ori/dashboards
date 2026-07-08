@@ -333,50 +333,20 @@ def load_nl_openaire_datasources(
 
 
 @app.cell(hide_code=True)
-def load_openalex_publications_counts(
-    CACHE_DIR,
-    hashlib,
-    is_wasm,
-    mo,
-    nl_baseline_df,
-    nl_openalex_orgs_df,
-    org_select,
-    pl,
-    refresh_btn,
-):
-    # Count OpenAlex works for selected organisations by querying openalex.works directly.
-    # Uses openalex_orgs_id (institution ID) to filter authorships[].institutions[].id.
-    # WARNING: full scan of openalex.works (364 M rows via UNNEST) — expect 15+ minutes.
+def load_openalex_publications_counts(nl_baseline_df, nl_openalex_orgs_df, org_select, pl):
+    # Sum pre-computed works_count from openalex.institutions (already loaded in nl_openalex_orgs_df).
+    # This replaces a 364 M-row UNNEST scan — result is instantaneous and identical in WASM.
     _sel_rors = (
         nl_baseline_df
         .filter(pl.col('full_name').is_in(org_select.value))
         ['ror'].drop_nulls().to_list()
     )
-    _openalex_ids = (
+    _count = (
         nl_openalex_orgs_df
         .filter(pl.col('ror').is_in(_sel_rors))
-        ['openalex_orgs_id'].drop_nulls().to_list()
+        ['works_count'].sum()
     )
-    _force = refresh_btn.value > 0
-    _key = hashlib.sha1(','.join(sorted(_sel_rors)).encode()).hexdigest()[:8]
-    _cache = CACHE_DIR / f'openalex_works_{_key}.parquet'
-    if not is_wasm and not _force and _cache.exists():
-        openalex_works_df = pl.read_parquet(_cache)
-    else:
-        _openalex_ids_list = '[' + ', '.join(f"'{i}'" for i in _openalex_ids) + ']' if _openalex_ids else "['']"
-        openalex_works_df = mo.sql(f"""
-        SELECT COUNT(DISTINCT w.id) AS openalex_works_count
-        FROM openalex.works AS w,
-             UNNEST(w.authorships) AS unnest
-        WHERE array_length(list_filter(
-            unnest.institutions,
-            x -> list_contains({_openalex_ids_list}, x.id)
-        )) > 0
-        """, output=False)
-        if not is_wasm:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            openalex_works_df.write_parquet(_cache)
-            (CACHE_DIR / '.last_refreshed').touch()
+    openalex_works_df = pl.DataFrame({'openalex_works_count': [_count]})
     return (openalex_works_df,)
 
 
@@ -387,22 +357,16 @@ def load_openaire_pubs_counts(
     is_wasm,
     mo,
     nl_baseline_df,
-    nl_openaire_orgs_df,
     org_select,
     pl,
     refresh_btn,
 ):
-    # Count OpenAIRE publications for selected organisations using openaire_orgs_id.
-    # Filters publications.organizations[].id — full scan of 206 M rows.
+    # Count OpenAIRE publications for selected organisations via ROR in organizations[].pids.
+    # Full scan of 206 M rows — slow but correct; cache-first pattern keeps repeat loads fast.
     _sel_rors = (
         nl_baseline_df
         .filter(pl.col('full_name').is_in(org_select.value))
         ['ror'].drop_nulls().to_list()
-    )
-    _openaire_ids = (
-        nl_openaire_orgs_df
-        .filter(pl.col('ror').is_in(_sel_rors))
-        ['openaire_orgs_id'].drop_nulls().to_list()
     )
     _force = refresh_btn.value > 0
     _key = hashlib.sha1(','.join(sorted(_sel_rors)).encode()).hexdigest()[:8]
@@ -410,13 +374,16 @@ def load_openaire_pubs_counts(
     if not is_wasm and not _force and _cache.exists():
         openaire_pubs_df = pl.read_parquet(_cache)
     else:
-        _openaire_ids_list = '[' + ', '.join(f"'{i}'" for i in _openaire_ids) + ']' if _openaire_ids else "['']"
+        # Filter by ROR via organizations[].pids — organizations[] has no .id field
+        _rors_list = '[' + ', '.join(f"'{r}'" for r in _sel_rors) + ']' if _sel_rors else "['']"
         openaire_pubs_df = mo.sql(f"""
         SELECT COUNT(DISTINCT pub.id) AS openaire_pubs_count
         FROM openaire.publications AS pub
         WHERE array_length(list_filter(
             pub.organizations,
-            x -> list_contains({_openaire_ids_list}, x.id)
+            x -> array_length(list_filter(
+                x.pids, p -> p.scheme = 'ROR' AND list_contains({_rors_list}, p.value)
+            )) > 0
         )) > 0
         """, output=False)
         if not is_wasm:
@@ -880,7 +847,7 @@ def overview(
         ),
         mo.stat(
             value=f"{_openalex_works:,}",
-            label="OpenAlex Works (est.)",
+            label="OpenAlex Works (inst. total)",
             caption=_sel_caption,
             bordered=True,
         ),

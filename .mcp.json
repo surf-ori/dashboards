@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "ori-ducklake": {
-      "command": "python3",
-      "args": ["-m", "ori_ducklake_mcp"],
+      "command": "uv",
+      "args": ["tool", "run", "ori-ducklake-mcp"],
       "type": "stdio",
       "env": {
         "DUCKLAKE_URL": "https://objectstore.surf.nl/cea01a7216d64348b7e51e5f3fc1901d:sprouts/catalog.ducklake",
-        "DUCKLAKE_ALIAS": "ori"
+        "DUCKLAKE_ALIAS": "lake"
       }
     }
   }
