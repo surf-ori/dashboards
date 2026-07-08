@@ -29,8 +29,6 @@ async def system():
         import micropip
         await micropip.install(["polars", "duckdb"])
 
-    import requests
-    import json
     import duckdb
     import polars as pl
 
@@ -127,7 +125,7 @@ def catalog_loading(mo, url):
 @app.cell(hide_code=True)
 def catalog_statistics_data(mo):
     quick_statistics = mo.sql(
-        f"""
+        """
         SELECT table_name, record_count, file_size_bytes
             FROM __ducklake_metadata_sprouts.ducklake_table_stats
             FULL JOIN __ducklake_metadata_sprouts.ducklake_table
@@ -169,7 +167,7 @@ def data_section(mo):
 @app.cell
 def data_datasets(mo):
     datasets = mo.sql(
-        f"""
+        """
         FROM __ducklake_metadata_sprouts.ducklake_schema
         WHERE schema_name != 'main';
         """,
@@ -181,14 +179,20 @@ def data_datasets(mo):
 @app.cell
 def data_tables(mo):
     tables = mo.sql(
-        f"""
-        SELECT *
+        """
+        SELECT
+            t.table_id,
+            t.schema_id,
+            t.table_name,
+            s.record_count,
+            s.file_size_bytes,
+            c.value AS comment
         FROM __ducklake_metadata_sprouts.ducklake_table t
         JOIN __ducklake_metadata_sprouts.ducklake_table_stats s
-        ON t.table_id = s.table_id
+            ON t.table_id = s.table_id
         JOIN __ducklake_metadata_sprouts.ducklake_tag c
-        ON t.table_id = c.object_id
-        WHERE key = 'comment'
+            ON t.table_id = c.object_id
+        WHERE c.key = 'comment'
         """,
         output=False
     )
@@ -198,11 +202,17 @@ def data_tables(mo):
 @app.cell
 def data_columns(mo):
     columns = mo.sql(
-        f"""
-        SELECT *
+        """
+        SELECT
+            c.column_id,
+            c.table_id,
+            c.begin_snapshot,
+            c.column_name,
+            c.column_type,
+            t.value
         FROM __ducklake_metadata_sprouts.ducklake_column c
         JOIN __ducklake_metadata_sprouts.ducklake_column_tag t
-        ON c.column_id = t.column_id
+            ON c.column_id = t.column_id
         """,
         output=False
     )
